@@ -484,7 +484,8 @@ class GUI:
 
         final_lines = []
         space_before_marker_regex = re.compile(r'\s+(\[(?:face|sfx):[^\]]+\])')
-        # HATE. LET ME TELL YOU HOW I HATE. # I feel you. Regex is pain. But also power? Maybe?
+        # HATE. LET ME TELL YOU HOW I HATE. 
+        # shizophrenia
 
         for line in wrapped_paragraphs:
             cleaned_line = space_before_marker_regex.sub(r'\1', line) # More cleaning! So much cleaning.
