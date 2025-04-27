@@ -54,4 +54,4 @@ python main.py
 
 ## License
 
-This project is open source. Go wild!
+This project is under MIT, basically almost open source
