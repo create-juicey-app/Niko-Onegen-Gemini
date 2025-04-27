@@ -1,7 +1,4 @@
-# ///////////////////////////////////////////////////////
-#            No copyright! Open Source!
-#  Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
+
 # Manages loading and saving application settings from/to a JSON file.
 # Provides default values and handles potential file errors.
 

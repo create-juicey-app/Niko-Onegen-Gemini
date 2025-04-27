@@ -1,7 +1,4 @@
-# ///////////////////////////////////////////////////////
-# No copyright! Open Source!
-# Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
+
 # This module defines the GUI class responsible for rendering the visual interface,
 # handling user input (keyboard, mouse), managing dialogue display (text animation,
 # faces, sounds), choices, input fields, and visual effects like window dragging

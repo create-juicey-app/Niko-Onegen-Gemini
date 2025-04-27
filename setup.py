@@ -1,7 +1,4 @@
-# ///////////////////////////////////////////////////////
-#            No copyright! Open Source!
-#  Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
+
 # Handles the first-time setup process for the application,
 # guiding the user through initial configuration options via a TWM-themed interface.
 

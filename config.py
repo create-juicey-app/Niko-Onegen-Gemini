@@ -1,7 +1,4 @@
-# ///////////////////////////////////////////////////////
-#            No copyright! Open Source!
-#  Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
+
 # It's quite literally the config.
 # its the config. nothing else.
 import os

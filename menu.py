@@ -1,8 +1,3 @@
-# ///////////////////////////////////////////////////////
-#            No copyright! Open Source!
-#  Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
-# This module defines the in-game options menu accessible via ESC.
 
 import pygame
 import sys

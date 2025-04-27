@@ -1,7 +1,4 @@
-# ///////////////////////////////////////////////////////
-#            No copyright! Open Source!
-#  Created by JuiceyDev (create-juicey-dev)
-# ///////////////////////////////////////////////////////
+
 # Main application entry point. Handles initialization, setup,
 # main loop, AI interaction, history display, and options menu.
 
