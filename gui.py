@@ -55,8 +55,8 @@ class GUI:
         pos_y = screen_height - self.window_height - 80
         os.environ['SDL_VIDEO_WINDOW_POS'] = f"{pos_x},{pos_y}" # Magic window positioning spell
 
-        self.screen = pygame.display.set_mode((self.window_width, self.window_height), pygame.NOFRAME)
-        pygame.display.set_caption("Chat with Niko")
+        self.screen = pygame.display.set_mode((self.window_width, self.window_height), pygame.SHOWN)
+        pygame.display.set_caption("Niko-Onegen")
         self.window_x = pos_x
         self.window_y = pos_y
 
