@@ -4,155 +4,92 @@ import config
 class ChoicesMixin:
     """Mixin class for handling multiple-choice interactions."""
 
-    def draw_multiple_choice(self, target_surface=None):
-        if target_surface is None:
-            target_surface = self.screen # Assume self.screen exists
-
-        if not self.choice_options:
-            self.choice_rects = [] # Clear rects if no options
+    def draw_multiple_choice(self, surface):
+        """Draws the multiple choice options centered on the screen, truncating long text."""
+        if not self.is_choice_active or not self.choice_options:
             return
 
-        self.choice_rects = [] # Reset rects for redraw
-        max_vertical_margin = 40 # Keep some space top/bottom of the window
-
-        # --- Calculate required size with current font ---
-        current_font = self.choice_font # Assumes self.choice_font exists
-        # Use a fixed padding between lines instead of font height + extra
-        current_spacing = 10 # Fixed padding between choice items
-        if not current_font:
-            print("Error: Choice font not available for drawing.")
-            current_font = pygame.font.Font(None, config.FONT_SIZE) # Fallback
-            current_spacing = 10 # Ensure spacing is set even on fallback
-
-        max_text_width = 0
-        total_text_height = 0
-        num_options = len(self.choice_options)
-
-        # Calculate initial dimensions needed based on the font
-        line_heights = []
+        # Calculate dimensions and positioning
+        max_width = 0
+        initial_rendered_surfaces = [] # Store initial renders to get max width
         for option_text in self.choice_options:
-            try:
-                text_surface = current_font.render(option_text, True, self.choice_color)
-                max_text_width = max(max_text_width, text_surface.get_width())
-                line_heights.append(text_surface.get_height())
-            except (pygame.error, AttributeError):
-                # Estimate height if render fails
-                print(f"Warning: Could not render choice '{option_text}' to calculate size.")
-                line_heights.append(current_font.get_height())
+            text_surf = self.choice_font.render(option_text, True, self.choice_color)
+            initial_rendered_surfaces.append(text_surf)
+            max_width = max(max_width, text_surf.get_width())
 
-        total_text_height = sum(line_heights) # Sum of actual text heights
-        total_text_height += current_spacing * (num_options - 1) if num_options > 1 else 0 # Add spacing between lines
-        required_bg_height = total_text_height + self.choice_padding * 2
-        required_bg_width = max_text_width + self.choice_padding * 2
+        # Define item height and gap
+        item_height = self.choice_font.get_height() + self.choice_padding # Height of one item's background
+        gap = config.CHOICE_SPACING_EXTRA # Gap between items
+        effective_item_spacing = item_height + gap # Total vertical space allocated per item
 
-        # --- Check if scaling is needed ---
-        available_height = self.window_height - max_vertical_margin * 2
-        scale_factor = 1.0
-        scaled_font = current_font
-        # Scale the fixed padding value
-        scaled_spacing = current_spacing
-        scaled_font_size = config.FONT_SIZE # Start with original size
+        # Calculate total height of the choice block
+        total_height = (len(self.choice_options) * effective_item_spacing) - gap + (self.choice_padding * 2)
+        start_y = (self.window_height - total_height) // 2 # Center the block vertically
 
-        if required_bg_height > available_height and available_height > 0:
-            scale_factor = available_height / required_bg_height
-            # Scale down font size, ensure minimum size (e.g., 10)
-            scaled_font_size = max(10, int(config.FONT_SIZE * scale_factor * 0.9)) # Added buffer (0.9)
-            # Scale down the fixed spacing, ensure minimum spacing (e.g., 2)
-            scaled_spacing = max(2, int(current_spacing * scale_factor * 0.8)) # Added buffer (0.8)
+        # Calculate width of the main background block based on the widest *original* text
+        block_width = max_width + self.choice_padding * 4 # Add padding around the widest text
+        # Ensure block width doesn't exceed screen width minus margins
+        max_allowed_block_width = self.window_width - 40 # Example margin
+        block_width = min(block_width, max_allowed_block_width)
+        block_x = (self.window_width - block_width) // 2
 
-            try:
-                # Try loading the scaled font using the configured regular font file
-                scaled_font = pygame.font.Font(config.FONT_REGULAR, scaled_font_size)
-            except (pygame.error, FileNotFoundError):
-                print(f"Warning: Failed to load scaled font '{config.FONT_REGULAR}' at size {scaled_font_size}. Using default.")
-                scaled_font = pygame.font.Font(None, scaled_font_size) # Fallback to default system font
+        # Draw main background for the whole block
+        bg_rect = pygame.Rect(block_x, start_y, block_width, total_height)
+        pygame.draw.rect(surface, self.choice_bg_color, bg_rect, border_radius=8)
 
-            # --- Recalculate size with scaled font ---
-            max_text_width = 0
-            total_text_height = 0
-            line_heights = [] # Recalculate line heights with scaled font
-            for option_text in self.choice_options:
-                try:
-                    text_surface = scaled_font.render(option_text, True, self.choice_color)
-                    max_text_width = max(max_text_width, text_surface.get_width())
-                    line_heights.append(text_surface.get_height())
-                except (pygame.error, AttributeError):
-                    print(f"Warning: Could not render choice '{option_text}' with scaled font.")
-                    line_heights.append(scaled_font.get_height()) # Use scaled font height
+        # Starting y for the first item's background rect, inside the main block padding
+        y = start_y + self.choice_padding
+        self.choice_rects = [] # Reset rects for collision detection
 
-            total_text_height = sum(line_heights) # Sum of scaled text heights
-            total_text_height += scaled_spacing * (num_options - 1) if num_options > 1 else 0 # Add scaled spacing
-            required_bg_height = total_text_height + self.choice_padding * 2
-            required_bg_width = max_text_width + self.choice_padding * 2
-
-            # Ensure scaled height doesn't exceed available height due to rounding/buffers
-            required_bg_height = min(required_bg_height, available_height)
-
-
-        # --- Determine final background size and position ---
-        # Use recalculated dimensions (might be original or scaled)
-        bg_width = required_bg_width
-        # Clamp height just in case scaling logic overshot slightly
-        bg_height = min(required_bg_height, self.window_height - max_vertical_margin * 2)
-        bg_height = max(bg_height, (line_heights[0] if line_heights else scaled_font.get_height()) + self.choice_padding * 2) # Ensure min height for one line
-
-        bg_x = (self.window_width - bg_width) // 2
-        # Center vertically within the available space
-        bg_y = max(max_vertical_margin, (self.window_height - bg_height) // 2)
-
-
-        # --- Draw background ---
-        try:
-            bg_surface = pygame.Surface((bg_width, bg_height), pygame.SRCALPHA)
-            bg_surface.fill(self.choice_bg_color) # Assumes self.choice_bg_color exists
-            target_surface.blit(bg_surface, (bg_x, bg_y))
-        except pygame.error as e:
-            print(f"Error creating or blitting choice background surface: {e}")
-            # Continue without background if it fails
-
-        # --- Draw options with the determined font (scaled or original) ---
-        current_y = bg_y + self.choice_padding
-        font_to_use = scaled_font # Use the potentially scaled font
-        spacing_to_use = scaled_spacing # Use the potentially scaled spacing
+        # Calculate max width available for text *inside* the block's padding
+        max_text_width = block_width - (self.choice_padding * 2)
 
         for i, option_text in enumerate(self.choice_options):
-            is_selected = (i == self.selected_choice_index)
-            # Assumes choice colors exist on self
-            color = self.choice_highlight_color if is_selected else self.choice_color
+            # Initial render to check width
+            text_surf = self.choice_font.render(option_text, True, self.choice_color)
+            display_surf = text_surf # Surface to actually draw
+            current_text = option_text
 
-            try:
-                final_surface = font_to_use.render(option_text, True, color)
-                # Center text horizontally within the background rect
-                text_rect = final_surface.get_rect(centerx=bg_x + bg_width // 2, top=current_y)
-
-                # Ensure text doesn't overflow the background vertically (especially if scaled)
-                if text_rect.bottom > bg_y + bg_height - self.choice_padding:
-                    print("Warning: Choice text rendering exceeds calculated background height.")
-                    break # Stop rendering more choices if space runs out
-
-                target_surface.blit(final_surface, text_rect)
-                # Store the actual rendered rect for mouse collision detection
-                self.choice_rects.append(text_rect)
-                # Advance Y position using the rendered height and the calculated spacing
-                current_y += final_surface.get_height() # Add height of the current line
-                if i < num_options - 1: # Add spacing only if it's not the last item
-                     current_y += spacing_to_use
-
-            except (pygame.error, AttributeError) as e:
-                 print(f"Error rendering choice text '{option_text}': {e}")
-                 # Skip rendering if font fails, but advance position and add placeholder rect
-                 placeholder_height = line_heights[i] if i < len(line_heights) else font_to_use.get_height()
-                 # Create a placeholder rect for collision detection consistency
-                 placeholder_rect = pygame.Rect(bg_x + self.choice_padding, current_y, bg_width - self.choice_padding*2, placeholder_height)
-                 self.choice_rects.append(placeholder_rect)
-                 # Advance Y position even for placeholders
-                 current_y += placeholder_height
-                 if i < num_options - 1:
-                      current_y += spacing_to_use
-                 # Check vertical overflow even for placeholders
-                 if current_y > bg_y + bg_height - self.choice_padding:
+            # --- Truncation Logic ---
+            while display_surf.get_width() > max_text_width and len(current_text) > 1:
+                # Remove last character before ellipsis (if adding one)
+                current_text = current_text[:-1]
+                # Render with ellipsis
+                display_surf = self.choice_font.render(current_text + "...", True, self.choice_color)
+                # If even "..." is too wide, break (shouldn't happen with reasonable fonts/padding)
+                if len(current_text) <= 1 and display_surf.get_width() > max_text_width:
+                     # As a fallback, render just "..." if it fits, otherwise empty
+                     ellipsis_surf = self.choice_font.render("...", True, self.choice_color)
+                     if ellipsis_surf.get_width() <= max_text_width:
+                          display_surf = ellipsis_surf
+                     else: # Render nothing if even ellipsis doesn't fit
+                          display_surf = pygame.Surface((0,0))
                      break
+            # --- End Truncation ---
 
+            # Calculate the background rect for this specific item
+            # Use the width of the *displayed* (potentially truncated) text for item bg width
+            item_bg_width = display_surf.get_width() + self.choice_padding * 2
+            # Center item_bg horizontally *within* the main bg_rect
+            item_bg_x = bg_rect.centerx - (item_bg_width // 2)
+            item_bg_rect = pygame.Rect(
+                item_bg_x, # Use calculated centered x
+                y,
+                item_bg_width,
+                item_height # Use calculated item height
+            )
+            self.choice_rects.append(item_bg_rect) # Store this rect for collision
+
+            # Draw highlight if selected (using item_bg_rect)
+            if i == self.selected_choice_index:
+                pygame.draw.rect(surface, self.choice_highlight_color, item_bg_rect, border_radius=5)
+
+            # Calculate text position centered within item_bg_rect
+            text_rect = display_surf.get_rect(center=item_bg_rect.center)
+            surface.blit(display_surf, text_rect) # Blit the potentially truncated text
+
+            # Increment y for the next item's background top
+            y += effective_item_spacing
 
     def handle_choice_event(self, event) -> tuple[str, str | int | None] | None:
         """Handles events specifically when multiple choice is active."""
