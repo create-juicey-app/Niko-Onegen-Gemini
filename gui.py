@@ -22,13 +22,14 @@ from gui_mixins.choices import ChoicesMixin
 from gui_mixins.effects import EffectsMixin
 from gui_mixins.rendering import RenderingMixin
 from gui_mixins.events import EventsMixin
+from gui_mixins.options_menu import OptionsMenuMixin # Import the new mixin
 
 if platform.system() == "Windows":
     import ctypes
     # Note: ctypes usage is now within EventsMixin and EffectsMixin
 
-# Inherit from all mixins
-class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin, RenderingMixin, EventsMixin):
+# Inherit from all mixins including the new OptionsMenuMixin
+class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin, RenderingMixin, EventsMixin, OptionsMenuMixin):
     """
     Handles the graphical user interface, rendering, and events by combining
     functionality from various specialized mixin classes.
@@ -113,6 +114,10 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         ]
         self.glitch_sfx = [sfx for sfx in self.glitch_sfx if sfx] # Filter out None values
 
+        # --- Initialize Mixin States ---
+        # (Call initializers for mixins that require them)
+        self._initialize_options_menu_state() # Initialize options menu state
+
         # --- Dialogue State ---
         self.active_text_sfx = self.default_text_sfx # Start with default text sound
         self.active_face_images = self.niko_face_images # Start with Niko faces
@@ -166,7 +171,7 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         # --- AI Thinking State ---
         self.ai_is_thinking = False # Is the AI currently "thinking"? (Affects face display)
 
-        # --- Choice State ---
+        # --- Choice State (Main choices, not options menu widgets) ---
         self.is_choice_active = False # Is the multiple-choice interface active?
         self.choice_options = [] # List of choice strings
         self.choice_rects = [] # List of pygame.Rect for each rendered choice (for mouse collision)
@@ -180,7 +185,7 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         self.choice_spacing = self.choice_font.get_height() + config.CHOICE_SPACING_EXTRA # Dynamic spacing
 
         # --- Menu / History State ---
-        self.is_menu_active = False # Is the settings menu overlay active?
+        self.is_menu_active = False # Is the *main* pause menu overlay active?
         self.menu_overlay_color = (0, 0, 0, 150) # Semi-transparent black overlay
         self.is_history_active = False # Is the dialogue history view active?
 
@@ -221,9 +226,20 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
 
     def update(self, dt):
         """Main update loop called every frame."""
-        # Ignore updates if history view is active
-        if self.is_history_active:
-            return
+        # Ignore updates if history view or options menu is active
+        if self.is_history_active or self.is_options_menu_active:
+             # Still update input cursor blink if options menu input is focused
+             if self.is_options_menu_active:
+                  try: # Defensive check
+                       focused_widget = self.options_widgets[self.focused_widget_index]
+                       if focused_widget["type"] == "input":
+                            focused_widget["cursor_timer"] += dt
+                            if focused_widget["cursor_timer"] >= config.CURSOR_BLINK_INTERVAL:
+                                 focused_widget["cursor_visible"] = not focused_widget["cursor_visible"]
+                                 focused_widget["cursor_timer"] %= config.CURSOR_BLINK_INTERVAL
+                  except (IndexError, KeyError, AttributeError):
+                       pass # Ignore errors if widget structure is unexpected
+             return
 
         # --- Forced Quit Update ---
         if self.is_forced_quitting:
@@ -315,7 +331,7 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         else:
             self.arrow_visible = False # Ensure arrow is hidden if conditions not met
 
-        # --- Input Cursor Blinking Update ---
+        # --- Input Cursor Blinking Update (Main Input) ---
         if self.is_input_active:
             self.input_cursor_timer += dt
             if self.input_cursor_timer >= config.CURSOR_BLINK_INTERVAL: # Use config value
@@ -333,6 +349,7 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
     # - render_background_and_overlay, render, render_input_box
     # - handle_event
     # - play_confirm_sound, play_sound (moved to ResourcesMixin for consistency)
+    # - draw_options_menu, handle_options_menu_event, enter_options_menu, exit_options_menu (now in OptionsMenuMixin)
 
     # Kept methods:
     # - __init__

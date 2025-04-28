@@ -19,6 +19,7 @@ from pydantic import ValidationError
 import random
 
 ai_results_queue = queue.Queue()
+niko_ai = None  # Make niko_ai global
 
 def ai_worker(niko_ai_instance: NikoAI, formatted_prompt: str, user_input: str | None = None, initial_greeting: bool = False):
     """Function to run AI generation in a separate thread."""
@@ -63,10 +64,12 @@ def display_dialogue_step(gui: GUI, text: str, face: str, speed: str = "normal")
         gui.update(dt)
         gui.render()
 
-def run_setup(gui: GUI, app_options: Dict[str, Any]):
-    """Runs the first-time setup process or allows re-running from menu."""
-    original_face_set = "niko" if gui.active_face_images is gui.niko_face_images else "twm"
-    original_sfx_set = "default" if gui.active_text_sfx is gui.default_text_sfx else "robot"
+
+def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
+    """Runs the sequential first-time setup process."""
+    original_options = app_options.copy()
+    original_volume = gui.sfx_volume
+    original_bg_path = app_options.get("background_image_path", config.DEFAULT_BG_IMG)
 
     gui.set_active_face_set("twm")
     gui.set_active_sfx("robot")
@@ -81,13 +84,11 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
         {"text": "Now, I will assist you in setting up your connection.", "face": "speak", "speed": "normal"},
         {"text": "Please answer the following prompts.", "face": "normal", "speed": "normal"},
     ]
-
     for dialogue in intro_dialogue:
         if not gui.running: break
         display_dialogue_step(gui, dialogue["text"], dialogue["face"], dialogue.get("speed", "normal"))
 
-    if not gui.running:
-        return
+    if not gui.running: return
 
     setup_steps = [
          {
@@ -116,18 +117,33 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
             "key": "background_image_path",
             "face": "smile"
         },
+        {
+            "question": "Setup: Choose AI Model",
+            "options": config.AVAILABLE_AI_MODELS,
+            "key": "ai_model_name",
+            "values": config.AVAILABLE_AI_MODELS,
+            "face": "normal"
+        },
     ]
 
     current_step_index = 0
     temp_options = app_options.copy()
+    cancelled = False
 
     while current_step_index < len(setup_steps):
+        if not gui.running:
+             cancelled = True
+             break
+
         step = setup_steps[current_step_index]
         question = step["question"]
         face = step.get("face", "normal")
         option_key = step["key"]
 
         gui.set_dialogue(NikoResponse(text=question, face=face, speed="normal", bold=False, italic=False))
+        gui.current_char_index = gui.total_chars_to_render
+        gui.is_animating = False
+        gui.draw_arrow = False
 
         is_input_step = step.get("type") == "input"
         is_background_step = step.get("type") == "background"
@@ -141,9 +157,7 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
             gui.is_input_active = True
             gui.input_cursor_visible = True
             gui.input_cursor_timer = 0.0
-
             gui.update(0)
-
             try:
                 if hasattr(gui, 'input_rect') and hasattr(gui, 'input_font'):
                     max_render_width = gui.input_rect.width - config.INPUT_BOX_PADDING * 2
@@ -154,41 +168,26 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
                     max_input_height = config.TEXTBOX_HEIGHT - 20
                     gui.input_rect.height = max(min_height, min(required_height, max_input_height))
                 else:
-                     print("Warning: gui.input_rect or gui.input_font not found during initial height calculation.")
-                     if hasattr(gui, 'input_rect'):
-                         gui.input_rect.height = config.INPUT_BOX_HEIGHT
-
+                     if hasattr(gui, 'input_rect'): gui.input_rect.height = config.INPUT_BOX_HEIGHT
             except Exception as e:
-                print(f"Warning: Error calculating initial input box size: {e}")
-                if hasattr(gui, 'input_rect'):
-                    gui.input_rect.height = config.INPUT_BOX_HEIGHT
+                print(f"Warning: Error calculating input box size during setup: {e}")
+                if hasattr(gui, 'input_rect'): gui.input_rect.height = config.INPUT_BOX_HEIGHT
 
         elif is_background_step:
             available_bgs = config.get_available_backgrounds(config.BG_DIR)
-            default_bg_name = os.path.basename(config.DEFAULT_BG_IMG)
-
-            options_list = []
-            values_list = []
-            for bg_name in available_bgs:
-                 options_list.append(bg_name)
-                 if bg_name == default_bg_name:
-                      values_list.append(config.DEFAULT_BG_IMG)
-                 else:
-                      values_list.append(os.path.join(config.BG_DIR, bg_name))
-
+            options_list = [os.path.basename(p) for p in available_bgs]
+            values_list = available_bgs
             if not options_list:
-                 print("Warning: No backgrounds found for setup. Using default.")
-                 temp_options["background_image_path"] = config.DEFAULT_BG_IMG
-                 current_step_index += 1
-                 continue
-
+                 print("Warning: No backgrounds found for setup. Skipping step.")
+                 current_step_index += 1; continue
             gui.choice_options = options_list
             gui.is_choice_active = True
             try:
                 current_value = temp_options[step["key"]]
                 gui.selected_choice_index = values_list.index(current_value)
             except (ValueError, KeyError):
-                gui.selected_choice_index = 0
+                 try: gui.selected_choice_index = options_list.index(os.path.basename(current_value))
+                 except (ValueError, KeyError, AttributeError): gui.selected_choice_index = 0
 
         else:
             options_list = step["options"]
@@ -196,61 +195,46 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
             gui.choice_options = options_list
             gui.is_choice_active = True
             current_value = temp_options.get(step["key"])
-            if current_value is not None:
-                 try:
-                      gui.selected_choice_index = values_list.index(current_value)
-                 except ValueError:
-                      gui.selected_choice_index = 0
-            else:
-                 gui.selected_choice_index = 0
+            try: gui.selected_choice_index = values_list.index(current_value)
+            except (ValueError, TypeError): gui.selected_choice_index = 0
 
         gui.render()
 
         step_complete = False
         while not step_complete and gui.running:
             dt = gui.clock.tick(60) / 1000.0
-
             for event in pygame.event.get():
                 result = gui.handle_event(event)
                 if result:
                     action, data = result
                     if action == "initiate_quit":
-                        gui.fade_out()
-                        gui.running = False
-                        step_complete = True
-                        break
+                        gui.fade_out(); gui.running = False; step_complete = True; cancelled = True; break
                     elif action == "quit":
-                        gui.running = False
-                        step_complete = True
-                        break
+                        gui.running = False; step_complete = True; cancelled = True; break
+                    elif action == "toggle_menu" or (action == "input_escape" and is_input_step) or (action == "choice_escape" and not is_input_step):
+                        gui.play_sound("menu_cancel")
+                        cancelled = True; step_complete = True; break
                     elif is_input_step and action == "submit_input":
-                        submitted_name = data.strip()
-                        if not submitted_name:
-                             gui.user_input_text = temp_options.get(step["key"], "")
-                             gui.input_cursor_pos = len(gui.user_input_text)
-                             continue
-                        temp_options[step["key"]] = submitted_name
-                        gui.is_input_active = False
-                        step_complete = True
-                        break
+                        submitted_value = data.strip()
+                        temp_options[step["key"]] = submitted_value
+                        gui.is_input_active = False; step_complete = True; gui.play_confirm_sound(); break
                     elif not is_input_step and action == "choice_made":
                         chosen_index = data
                         chosen_value = values_list[chosen_index]
-                        option_key = step["key"]
-
                         temp_options[option_key] = chosen_value
-
                         if option_key == "sfx_volume":
-                            gui.set_sfx_volume(chosen_value)
+                            gui.set_sfx_volume(chosen_value); gui.play_confirm_sound()
                         elif option_key == "background_image_path":
-                            gui.bg_img_original = gui.load_image(chosen_value)
+                            try:
+                                gui.bg_img_original = gui.load_image(chosen_value)
+                                if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
+                                else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
+                            except Exception as e: print(f"Error loading background preview: {e}")
+                            gui.play_confirm_sound()
+                        else: gui.play_confirm_sound()
+                        gui.is_choice_active = False; step_complete = True; break
 
-                        gui.is_choice_active = False
-                        step_complete = True
-                        break
-
-            if not gui.running: break
-
+            if not gui.running or cancelled: break
             gui.update(dt)
             gui.render()
 
@@ -259,30 +243,39 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
         gui.choice_options = []
         gui.choice_rects = []
 
-        if not gui.running: break
+        if not gui.running or cancelled: break
         current_step_index += 1
 
     if gui.running:
-        gui.set_active_face_set("twm")
-        display_dialogue_step(gui, "Configuration complete.", "smile", "fast")
+        if cancelled:
+            print("Initial setup cancelled.")
+            app_options.clear()
+            app_options.update(original_options)
+            gui.set_sfx_volume(original_volume)
+            gui.bg_img_original = gui.load_image(original_bg_path)
+            if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
+            else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
+            gui.running = False
+        else:
+            app_options.clear()
+            app_options.update(temp_options)
+            app_options["setup_complete"] = True
+            options.save_options(app_options)
+            display_dialogue_step(gui, "Configuration complete.", "smile", "fast")
 
-        app_options.update(temp_options)
-        app_options["setup_complete"] = True
-        options.save_options(app_options)
+            gui.set_sfx_volume(app_options["sfx_volume"])
+            gui.bg_img_original = gui.load_image(app_options["background_image_path"])
+            if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
+            else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
+            gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
+            global niko_ai
+            if niko_ai:
+                 niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                 print(f"AI Model set to: {niko_ai.model_name} after initial setup.")
 
-        gui.fade_out()
-        if not gui.running: return
-
-        if original_face_set == "niko":
+        if not cancelled:
              gui.set_active_face_set("niko")
              gui.set_active_sfx("default")
-        else:
-             gui.set_active_face_set("twm")
-             gui.set_active_sfx("robot")
-
-        gui.set_sfx_volume(app_options["sfx_volume"])
-        gui.bg_img_original = gui.load_image(app_options["background_image_path"])
-        gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
 
 
 def display_chat_history(gui: GUI, history: List[Dict]):
@@ -474,121 +467,102 @@ def display_chat_history(gui: GUI, history: List[Dict]):
     gui.is_history_active = False
 
 
-def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict], niko_ai: NikoAI):
-    """Displays the options menu."""
+def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]):
+    """Displays the main pause menu."""
+    global niko_ai
     gui.is_menu_active = True
 
-    menu_items = ["Resume chat", "Setup", "Chat History", "Change AI Model", "Quit"]
+    menu_items = ["Resume chat", "Options", "Chat History", "Quit"]
     selected_index = 0
-    initial_index = selected_index
 
     menu_active = True
     while menu_active and gui.running:
         dt = gui.clock.tick(60) / 1000.0
-        prev_selected_index = gui.selected_choice_index
 
         for event in pygame.event.get():
+            gui.choice_options = menu_items
+            gui.is_choice_active = True
+
             result = gui.handle_event(event)
 
             if result:
                 action, data = result
                 if action == "initiate_quit":
-                    gui.fade_out()
-                    gui.running = False
-                    menu_active = False
-                    break
+                    gui.fade_out(); gui.running = False; menu_active = False; break
                 elif action == "quit":
-                    gui.running = False
-                    menu_active = False
-                    break
+                    gui.running = False; menu_active = False; break
                 elif action == "choice_made":
                     chosen_index = data
                     selected_index = chosen_index
                     chosen_action = menu_items[selected_index]
 
+                    gui.is_choice_active = False
+                    gui.choice_options = []
+                    gui.choice_rects = []
+
                     if chosen_action == "Resume chat":
                         menu_active = False
-                    elif chosen_action == "Setup":
+                        gui.play_sound("menu_cancel")
+                    elif chosen_action == "Options":
                         gui.is_menu_active = False
-                        run_setup(gui, app_options)
+                        gui.enter_options_menu()
+
+                        options_menu_running = True
+                        while options_menu_running and gui.running:
+                            options_dt = gui.clock.tick(60) / 1000.0
+                            for options_event in pygame.event.get():
+                                if options_event.type == pygame.QUIT:
+                                     gui.fade_out(); gui.running = False; options_menu_running = False; menu_active = False; break
+                                drag_result = gui.handle_event(options_event)
+                                if drag_result and drag_result[0] in ["initiate_quit", "quit", "drag_start", "dragging", "drag_end"]:
+                                     if drag_result[0] == "initiate_quit": gui.fade_out()
+                                     if drag_result[0] in ["initiate_quit", "quit"]: gui.running = False; options_menu_running = False; menu_active = False; break
+                                     continue
+
+                                options_action = gui.handle_options_menu_event(options_event)
+                                if options_action == "save":
+                                    gui.exit_options_menu(save_changes=True)
+                                    options_menu_running = False
+                                    if niko_ai: niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                                    break
+                                elif options_action == "cancel":
+                                    gui.exit_options_menu(save_changes=False)
+                                    options_menu_running = False
+                                    break
+                            if not gui.running: break
+
+                            gui.update(options_dt)
+                            gui.draw_options_menu(gui.screen)
+                            pygame.display.flip()
+
                         if not gui.running: menu_active = False
                         gui.is_menu_active = True
+                        selected_index = 0
+                        gui.selected_choice_index = 0
                     elif chosen_action == "Chat History":
+                        gui.is_menu_active = False
                         display_chat_history(gui, ai_history)
                         if not gui.running: menu_active = False
-                    elif chosen_action == "Change AI Model":
-                        gui.is_choice_active = False
-                        gui.choice_options = []
-                        gui.choice_rects = []
-
-                        model_options = config.AVAILABLE_AI_MODELS
-                        current_model = app_options.get("ai_model_name", config.AI_MODEL_NAME)
-                        try:
-                            model_selected_index = model_options.index(current_model)
-                        except ValueError:
-                            model_selected_index = 0
-
-                        gui.choice_options = model_options
-                        gui.selected_choice_index = model_selected_index
-                        gui.is_choice_active = True
-
-                        model_chosen = False
-                        while not model_chosen and gui.running:
-                            dt_model = gui.clock.tick(60) / 1000.0
-                            for model_event in pygame.event.get():
-                                model_result = gui.handle_event(model_event)
-                                if model_result:
-                                    model_action, model_data = model_result
-                                    if model_action == "quit":
-                                        gui.running = False
-                                        model_chosen = True
-                                        menu_active = False
-                                        break
-                                    elif model_action == "choice_made":
-                                        new_model_index = model_data
-                                        new_model_name = model_options[new_model_index]
-                                        app_options["ai_model_name"] = new_model_name
-                                        niko_ai.model_name = new_model_name
-                                        options.save_options(app_options)
-                                        print(f"AI Model changed to: {new_model_name}")
-                                        gui.play_confirm_sound()
-                                        model_chosen = True
-                                        break
-                                    elif model_action == "toggle_menu" or model_action == "input_escape":
-                                        gui.play_sound("menu_cancel")
-                                        model_chosen = True
-                                        break
-                            if not gui.running or not menu_active: break
-                            if model_chosen: break
-
-                            gui.render_background_and_overlay()
-                            gui.draw_multiple_choice()
-                            pygame.display.flip()
-                            gui.update(dt_model)
-
-                        gui.is_choice_active = False
-                        gui.choice_options = []
-                        gui.choice_rects = []
-                        gui.choice_options = menu_items
-                        gui.selected_choice_index = selected_index
-                        gui.is_choice_active = True
-
+                        gui.is_menu_active = True
+                        selected_index = 0
+                        gui.selected_choice_index = 0
                     elif chosen_action == "Quit":
-                        gui.fade_out()
-                        gui.running = False
-                        menu_active = False
+                        gui.fade_out(); gui.running = False; menu_active = False
+
+                    break
 
                 elif action == "drag_start" or action == "dragging" or action == "drag_end":
                     pass
                 elif action == "toggle_menu":
                     menu_active = False
+                    gui.play_sound("menu_cancel")
                     break
 
         if not gui.running or not menu_active: break
 
         selected_index = gui.selected_choice_index
 
-        gui.render_background_and_overlay()
+        gui.render_background_and_overlay(gui.screen)
 
         gui.choice_options = menu_items
         gui.selected_choice_index = selected_index
@@ -605,51 +579,40 @@ def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dic
 
 
 def main():
+    global niko_ai
     app_options = options.load_options()
 
     try:
         gui = GUI(app_options)
     except pygame.error as e:
-        print(f"Fatal Error initializing Pygame/GUI: {e}")
-        sys.exit(1)
+        print(f"Fatal Error initializing Pygame/GUI: {e}"); sys.exit(1)
     except Exception as e:
-        print(f"Fatal Error initializing GUI: {e}")
-        sys.exit(1)
+        print(f"Fatal Error initializing GUI: {e}"); sys.exit(1)
 
     if not app_options.get("setup_complete", False):
-        run_setup(gui, app_options)
+        run_initial_setup(gui, app_options)
         if not gui.running:
-             pygame.quit()
-             sys.exit()
+             pygame.quit(); sys.exit()
         app_options = options.load_options()
-        gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
         gui.set_active_face_set("niko")
         gui.set_active_sfx("default")
+        gui.set_sfx_volume(app_options["sfx_volume"])
+        gui.bg_img_original = gui.load_image(app_options["background_image_path"])
+        if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
+        else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
+        gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
 
     player_name = app_options.get('player_name', 'Player')
-    if not player_name:
-        player_name = "Player"
-        print("Warning: 'player_name' is empty in options. Using default 'Player'.")
-
-    try:
-        formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
-    except Exception as e:
-        print(f"Error formatting initial prompt: {e}. Using basic prompt.")
-        formatted_initial_prompt = f"Hello {player_name}, I am Niko."
+    if not player_name: player_name = "Player"
+    try: formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
+    except Exception as e: print(f"Error formatting initial prompt: {e}"); formatted_initial_prompt = f"Hello {player_name}, I am Niko."
 
     ai_model_to_use = app_options.get("ai_model_name", config.AI_MODEL_NAME)
     print(f"Using AI Model: {ai_model_to_use}")
-
     try:
         niko_ai = NikoAI(ai_model_name=ai_model_to_use)
-    except ValueError as e:
-        print(f"Fatal Error initializing AI: {e}")
-        pygame.quit()
-        sys.exit(1)
-    except Exception as e:
-        print(f"Fatal Error initializing AI: {e}")
-        pygame.quit()
-        sys.exit(1)
+    except ValueError as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
+    except Exception as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
 
     ai_is_thinking = False
     dialogue_queue = deque()
@@ -659,9 +622,7 @@ def main():
     force_quit_command_detected = False
 
     gui.fade_in()
-    if not gui.running:
-        pygame.quit()
-        sys.exit()
+    if not gui.running: pygame.quit(); sys.exit()
 
     def process_ai_response(response_segments: List[NikoResponse] | None):
         """Queues dialogue segments received from the AI and displays the first. Checks for [quit] or [quit_forced] command."""
@@ -722,7 +683,7 @@ def main():
 
     ai_is_thinking = True
     gui.ai_is_thinking = True
-    gui.render() # Render the initial state (likely showing pulsating face)
+    gui.render()
     pygame.display.flip()
 
     ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt), kwargs={'initial_greeting': True}, daemon=True)
@@ -752,42 +713,35 @@ def main():
                  ai_thread = None
 
         for event in pygame.event.get():
+            if gui.is_options_menu_active: continue
+
             result = gui.handle_event(event)
 
             if result:
                 action, data = result
 
                 if action == "initiate_quit":
-                    gui.fade_out()
-                    gui.running = False
-                    break
-
+                    gui.fade_out(); gui.running = False; break
                 elif action == "quit":
-                    gui.running = False
-                    break
-
+                    gui.running = False; break
                 elif action == "toggle_menu":
-                     if not gui.is_menu_active and not gui.is_input_active and not gui.is_choice_active:
-                          should_continue = run_options_menu(gui, app_options, niko_ai.conversation_history, niko_ai)
-                          if not should_continue:
-                               break
-                          else:
-                               gui.play_sound("menu_buzzer")
+                     if not gui.is_menu_active and not gui.is_input_active and not gui.is_choice_active and not gui.is_options_menu_active:
+                          should_continue = show_main_menu(gui, app_options, niko_ai.conversation_history)
+                          if not should_continue: break
 
                           app_options = options.load_options()
                           gui.set_sfx_volume(app_options["sfx_volume"])
                           gui.bg_img_original = gui.load_image(app_options["background_image_path"])
+                          if gui.bg_img_original:
+                               gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
+                          else:
+                               gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
                           gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
                           player_name = app_options.get('player_name', 'Player')
                           if not player_name: player_name = "Player"
-                          try:
-                              formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
-                          except Exception as e:
-                              print(f"Error re-formatting initial prompt: {e}. Using basic prompt.")
-                              formatted_initial_prompt = f"Hello {player_name}, I am Niko."
-                          niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                          try: formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
+                          except Exception as e: print(f"Error re-formatting initial prompt after menu: {e}")
                           print(f"Current AI Model after menu: {niko_ai.model_name}")
-
 
                 elif not gui.is_menu_active:
                     if not ai_is_thinking:
@@ -818,14 +772,27 @@ def main():
                                 ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt, user_input), daemon=True)
                                 ai_thread.start()
 
-                        elif action == "skip_anim" or action == "skip_pause":
-                            pass
+                        elif action == "skip_anim":
+                             gui.current_char_index = gui.total_chars_to_render
+                             gui.is_animating = False
+                             gui.draw_arrow = True
+                             if gui.active_text_sfx and gui.active_text_sfx.get_num_channels() > 0:
+                                  gui.active_text_sfx.stop()
+                        elif action == "skip_pause":
+                             gui.is_paused = False
+                             gui.pause_timer = 0.0
+                             gui.current_pause_duration = 0.0
+                             if gui.active_text_sfx and gui.active_text_sfx.get_num_channels() > 0:
+                                  gui.active_text_sfx.stop()
 
-        if not gui.running:
-            break
+        if not gui.running: break
 
-        gui.update(dt)
-        gui.render()
+        if not gui.is_options_menu_active:
+             gui.update(dt)
+
+        if not gui.is_options_menu_active:
+             gui.render()
+             pygame.display.flip()
 
     options.save_options(app_options)
     pygame.quit()
