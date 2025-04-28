@@ -1,0 +1,4 @@
+pygame
+pydantic
+python-dotenv
+google-genai
