@@ -1,4 +1,3 @@
-
 # Main application entry point. Handles initialization, setup,
 # main loop, AI interaction, history display, and options menu.
 
@@ -47,9 +46,15 @@ def display_dialogue_step(gui: GUI, text: str, face: str, speed: str = "normal")
             result = gui.handle_event(event)
             if result:
                 action, _ = result
-                if action == "quit":
-                    pygame.quit()
-                    sys.exit()
+                if action == "initiate_quit":
+                    gui.fade_out()
+                    gui.running = False
+                    waiting_for_advance = False
+                    break
+                elif action == "quit":
+                    gui.running = False
+                    waiting_for_advance = False
+                    break
                 elif action in ["advance", "skip_anim", "skip_pause"]:
                     if not gui.is_animating and not gui.is_paused:
                          waiting_for_advance = False
@@ -120,9 +125,9 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
         step = setup_steps[current_step_index]
         question = step["question"]
         face = step.get("face", "normal")
+        option_key = step["key"]
 
         gui.set_dialogue(NikoResponse(text=question, face=face, speed="normal", bold=False, italic=False))
-        gui.render()
 
         is_input_step = step.get("type") == "input"
         is_background_step = step.get("type") == "background"
@@ -130,11 +135,34 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
         values_list = []
 
         if is_input_step:
-            gui.is_input_active = True
-            gui.user_input_text = temp_options.get(step["key"], "")
+            current_value = temp_options.get(option_key, "")
+            gui.user_input_text = current_value
             gui.input_cursor_pos = len(gui.user_input_text)
+            gui.is_input_active = True
             gui.input_cursor_visible = True
             gui.input_cursor_timer = 0.0
+
+            gui.update(0)
+
+            try:
+                if hasattr(gui, 'input_rect') and hasattr(gui, 'input_font'):
+                    max_render_width = gui.input_rect.width - config.INPUT_BOX_PADDING * 2
+                    wrapped_lines, _ = gui._wrap_input_text(gui.user_input_text, max_render_width)
+                    num_lines = len(wrapped_lines) if wrapped_lines else 1
+                    required_height = (num_lines * gui.input_font.get_height()) + config.INPUT_BOX_PADDING * 2
+                    min_height = config.INPUT_BOX_HEIGHT
+                    max_input_height = config.TEXTBOX_HEIGHT - 20
+                    gui.input_rect.height = max(min_height, min(required_height, max_input_height))
+                else:
+                     print("Warning: gui.input_rect or gui.input_font not found during initial height calculation.")
+                     if hasattr(gui, 'input_rect'):
+                         gui.input_rect.height = config.INPUT_BOX_HEIGHT
+
+            except Exception as e:
+                print(f"Warning: Error calculating initial input box size: {e}")
+                if hasattr(gui, 'input_rect'):
+                    gui.input_rect.height = config.INPUT_BOX_HEIGHT
+
         elif is_background_step:
             available_bgs = config.get_available_backgrounds(config.BG_DIR)
             default_bg_name = os.path.basename(config.DEFAULT_BG_IMG)
@@ -162,7 +190,7 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
             except (ValueError, KeyError):
                 gui.selected_choice_index = 0
 
-        else: # Standard options/values step
+        else:
             options_list = step["options"]
             values_list = step["values"]
             gui.choice_options = options_list
@@ -176,6 +204,8 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
             else:
                  gui.selected_choice_index = 0
 
+        gui.render()
+
         step_complete = False
         while not step_complete and gui.running:
             dt = gui.clock.tick(60) / 1000.0
@@ -184,9 +214,15 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
                 result = gui.handle_event(event)
                 if result:
                     action, data = result
-                    if action == "quit":
-                        pygame.quit()
-                        sys.exit()
+                    if action == "initiate_quit":
+                        gui.fade_out()
+                        gui.running = False
+                        step_complete = True
+                        break
+                    elif action == "quit":
+                        gui.running = False
+                        step_complete = True
+                        break
                     elif is_input_step and action == "submit_input":
                         submitted_name = data.strip()
                         if not submitted_name:
@@ -233,6 +269,9 @@ def run_setup(gui: GUI, app_options: Dict[str, Any]):
         app_options.update(temp_options)
         app_options["setup_complete"] = True
         options.save_options(app_options)
+
+        gui.fade_out()
+        if not gui.running: return
 
         if original_face_set == "niko":
              gui.set_active_face_set("niko")
@@ -307,10 +346,21 @@ def display_chat_history(gui: GUI, history: List[Dict]):
             if not line_text: continue
 
             max_bubble_width_pixels = int(gui.window_width * MAX_BUBBLE_WIDTH_RATIO)
-            wrapped_lines = textwrap.wrap(line_text, width=int(max_bubble_width_pixels / (font.size("A")[0] * 1.2)),
+            font_char_width = 10
+            try:
+                font_char_width = font.size("A")[0] * 1.2
+                if font_char_width <= 0: font_char_width = 10
+            except (pygame.error, AttributeError):
+                pass
+
+            wrap_width_chars = int(max_bubble_width_pixels / font_char_width)
+            if wrap_width_chars <= 0: wrap_width_chars = 10
+
+            wrapped_lines = textwrap.wrap(line_text, width=wrap_width_chars,
                                            replace_whitespace=True, drop_whitespace=True)
 
-            if not wrapped_lines: continue
+            if not wrapped_lines:
+                continue
 
             text_block_height = len(wrapped_lines) * line_height
             bubble_height = text_block_height + BUBBLE_PADDING * 2
@@ -328,17 +378,18 @@ def display_chat_history(gui: GUI, history: List[Dict]):
             bubble_width = actual_max_line_width + BUBBLE_PADDING * 2
 
             show_face = role == 'model' and is_first_line_of_turn
+            bubble_x_offset = 0
             if show_face:
                 bubble_width += FACE_SIZE + BUBBLE_PADDING
+                bubble_x_offset = FACE_SIZE + BUBBLE_PADDING
 
             bubble_surf = pygame.Surface((bubble_width, bubble_height), pygame.SRCALPHA)
             bubble_color = NIKO_BUBBLE_COLOR if role == 'model' else USER_BUBBLE_COLOR
             bubble_surf.fill(bubble_color)
 
             text_y = BUBBLE_PADDING
-            text_x = BUBBLE_PADDING
+            text_x = BUBBLE_PADDING + bubble_x_offset
             if show_face:
-                text_x += FACE_SIZE + BUBBLE_PADDING
                 face_image = gui.active_face_images.get(face_name)
                 if not face_image: face_image = gui.active_face_images.get("normal")
                 if face_image:
@@ -375,18 +426,19 @@ def display_chat_history(gui: GUI, history: List[Dict]):
     while history_active and gui.running:
         dt = gui.clock.tick(60) / 1000.0
 
-        # Handle user input for scrolling and exiting
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                gui.running = False
-                history_active = False
-                break
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+            result = gui.handle_event(event)
+            if result:
+                action, _ = result
+                if action == "initiate_quit":
+                    gui.running = False
                     history_active = False
                     break
-                # Handle scrolling keys (UP, DOWN, PAGEUP, PAGEDOWN)
-                elif event.key == pygame.K_UP:
+                elif action == "history_escape":
+                    history_active = False
+                    break
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_UP:
                     scroll_y = max(0, scroll_y - SCROLL_SPEED)
                 elif event.key == pygame.K_DOWN:
                     scroll_y = min(max_scroll_y, scroll_y + SCROLL_SPEED)
@@ -394,50 +446,39 @@ def display_chat_history(gui: GUI, history: List[Dict]):
                      scroll_y = max(0, scroll_y - gui.window_height)
                 elif event.key == pygame.K_PAGEDOWN:
                      scroll_y = min(max_scroll_y, scroll_y + gui.window_height)
-            # Handle mouse wheel scrolling
             elif event.type == pygame.MOUSEWHEEL:
                 scroll_y = max(0, min(max_scroll_y, scroll_y - event.y * SCROLL_SPEED))
-            # Pass other mouse events to the GUI handler (e.g., for potential future interactions)
-            elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEMOTION, pygame.MOUSEBUTTONUP]:
-                 gui.handle_event(event)
 
         if not gui.running: break
 
-        # Clear the screen for the new frame
         gui.screen.fill(BG_COLOR)
 
-        # Determine which bubbles are currently visible based on scroll position
         visible_area = pygame.Rect(0, scroll_y, gui.window_width, gui.window_height)
-        # Draw only the visible bubbles, adjusted by the scroll offset
         for bubble_surf, bubble_rect, role in rendered_bubbles:
             if bubble_rect.colliderect(visible_area):
                 draw_pos = bubble_rect.move(0, -scroll_y)
                 gui.screen.blit(bubble_surf, draw_pos)
 
-        # Draw the scrollbar if content exceeds window height
         if max_scroll_y > 0:
-            # Calculate scrollbar size and position based on content height and scroll position
             scrollbar_height_ratio = min(1.0, gui.window_height / total_content_height)
             scrollbar_height = max(20, int(gui.window_height * scrollbar_height_ratio))
             scrollbar_y_ratio = scroll_y / max_scroll_y if max_scroll_y > 0 else 0
             scrollbar_y = int(scrollbar_y_ratio * (gui.window_height - scrollbar_height))
 
             scrollbar_rect = pygame.Rect(gui.window_width - 10, scrollbar_y, 8, scrollbar_height)
-            # Draw the scrollbar background and border
             pygame.draw.rect(gui.screen, (100, 100, 100), scrollbar_rect)
             pygame.draw.rect(gui.screen, (150, 150, 150), scrollbar_rect, 1)
 
-        # Update the display
         pygame.display.flip()
 
     gui.is_history_active = False
 
 
-def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]):
+def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict], niko_ai: NikoAI):
     """Displays the options menu."""
     gui.is_menu_active = True
 
-    menu_items = ["Resume chat", "Setup", "Chat History", "Quit"]
+    menu_items = ["Resume chat", "Setup", "Chat History", "Change AI Model", "Quit"]
     selected_index = 0
     initial_index = selected_index
 
@@ -451,7 +492,12 @@ def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dic
 
             if result:
                 action, data = result
-                if action == "quit":
+                if action == "initiate_quit":
+                    gui.fade_out()
+                    gui.running = False
+                    menu_active = False
+                    break
+                elif action == "quit":
                     gui.running = False
                     menu_active = False
                     break
@@ -470,10 +516,68 @@ def run_options_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dic
                     elif chosen_action == "Chat History":
                         display_chat_history(gui, ai_history)
                         if not gui.running: menu_active = False
+                    elif chosen_action == "Change AI Model":
+                        gui.is_choice_active = False
+                        gui.choice_options = []
+                        gui.choice_rects = []
+
+                        model_options = config.AVAILABLE_AI_MODELS
+                        current_model = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                        try:
+                            model_selected_index = model_options.index(current_model)
+                        except ValueError:
+                            model_selected_index = 0
+
+                        gui.choice_options = model_options
+                        gui.selected_choice_index = model_selected_index
+                        gui.is_choice_active = True
+
+                        model_chosen = False
+                        while not model_chosen and gui.running:
+                            dt_model = gui.clock.tick(60) / 1000.0
+                            for model_event in pygame.event.get():
+                                model_result = gui.handle_event(model_event)
+                                if model_result:
+                                    model_action, model_data = model_result
+                                    if model_action == "quit":
+                                        gui.running = False
+                                        model_chosen = True
+                                        menu_active = False
+                                        break
+                                    elif model_action == "choice_made":
+                                        new_model_index = model_data
+                                        new_model_name = model_options[new_model_index]
+                                        app_options["ai_model_name"] = new_model_name
+                                        niko_ai.model_name = new_model_name
+                                        options.save_options(app_options)
+                                        print(f"AI Model changed to: {new_model_name}")
+                                        gui.play_confirm_sound()
+                                        model_chosen = True
+                                        break
+                                    elif model_action == "toggle_menu" or model_action == "input_escape":
+                                        gui.play_sound("menu_cancel")
+                                        model_chosen = True
+                                        break
+                            if not gui.running or not menu_active: break
+                            if model_chosen: break
+
+                            gui.render_background_and_overlay()
+                            gui.draw_multiple_choice()
+                            pygame.display.flip()
+                            gui.update(dt_model)
+
+                        gui.is_choice_active = False
+                        gui.choice_options = []
+                        gui.choice_rects = []
+                        gui.choice_options = menu_items
+                        gui.selected_choice_index = selected_index
+                        gui.is_choice_active = True
+
                     elif chosen_action == "Quit":
+                        gui.fade_out()
                         gui.running = False
                         menu_active = False
-                    break
+
                 elif action == "drag_start" or action == "dragging" or action == "drag_end":
                     pass
                 elif action == "toggle_menu":
@@ -519,6 +623,8 @@ def main():
              sys.exit()
         app_options = options.load_options()
         gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
+        gui.set_active_face_set("niko")
+        gui.set_active_sfx("default")
 
     player_name = app_options.get('player_name', 'Player')
     if not player_name:
@@ -531,8 +637,11 @@ def main():
         print(f"Error formatting initial prompt: {e}. Using basic prompt.")
         formatted_initial_prompt = f"Hello {player_name}, I am Niko."
 
+    ai_model_to_use = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+    print(f"Using AI Model: {ai_model_to_use}")
+
     try:
-        niko_ai = NikoAI()
+        niko_ai = NikoAI(ai_model_name=ai_model_to_use)
     except ValueError as e:
         print(f"Fatal Error initializing AI: {e}")
         pygame.quit()
@@ -549,10 +658,15 @@ def main():
     quit_initiated_by_ai = False
     force_quit_command_detected = False
 
+    gui.fade_in()
+    if not gui.running:
+        pygame.quit()
+        sys.exit()
 
     def process_ai_response(response_segments: List[NikoResponse] | None):
         """Queues dialogue segments received from the AI and displays the first. Checks for [quit] or [quit_forced] command."""
         nonlocal ready_for_input, ai_is_thinking, quit_initiated_by_ai, force_quit_command_detected
+        gui.ai_is_thinking = False
         dialogue_queue.clear()
         ready_for_input = False
         ai_is_thinking = False
@@ -603,10 +717,12 @@ def main():
             quit_initiated_by_ai = True
             ready_for_input = False
             gui.is_input_active = False
-            gui.draw_arrow = False
+            if not dialogue_queue:
+                gui.draw_arrow = True
 
     ai_is_thinking = True
-    gui.render()
+    gui.ai_is_thinking = True
+    gui.render() # Render the initial state (likely showing pulsating face)
     pygame.display.flip()
 
     ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt), kwargs={'initial_greeting': True}, daemon=True)
@@ -641,15 +757,19 @@ def main():
             if result:
                 action, data = result
 
-                if action == "quit":
+                if action == "initiate_quit":
+                    gui.fade_out()
+                    gui.running = False
+                    break
+
+                elif action == "quit":
                     gui.running = False
                     break
 
                 elif action == "toggle_menu":
                      if not gui.is_menu_active and not gui.is_input_active and not gui.is_choice_active:
-                          should_continue = run_options_menu(gui, app_options, niko_ai.conversation_history)
+                          should_continue = run_options_menu(gui, app_options, niko_ai.conversation_history, niko_ai)
                           if not should_continue:
-                               gui.running = False
                                break
                           else:
                                gui.play_sound("menu_buzzer")
@@ -665,6 +785,9 @@ def main():
                           except Exception as e:
                               print(f"Error re-formatting initial prompt: {e}. Using basic prompt.")
                               formatted_initial_prompt = f"Hello {player_name}, I am Niko."
+                          niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                          print(f"Current AI Model after menu: {niko_ai.model_name}")
+
 
                 elif not gui.is_menu_active:
                     if not ai_is_thinking:
@@ -674,6 +797,7 @@ def main():
                                 gui.set_dialogue(next_segment)
                                 ready_for_input = False
                             elif quit_initiated_by_ai:
+                                gui.fade_out()
                                 gui.running = False
                                 break
                             elif not gui.is_input_active:
@@ -686,6 +810,7 @@ def main():
                             user_input = data
                             if user_input and ready_for_input:
                                 ai_is_thinking = True
+                                gui.ai_is_thinking = True
                                 ready_for_input = False
                                 gui.is_input_active = False
                                 gui.clear_input()
@@ -696,13 +821,6 @@ def main():
                         elif action == "skip_anim" or action == "skip_pause":
                             pass
 
-            elif event.type == pygame.KEYDOWN:
-                 if event.key == pygame.K_ESCAPE:
-                      if not gui.is_menu_active and not gui.is_input_active and not gui.is_choice_active:
-                           gui.running = False
-                           break
-
-
         if not gui.running:
             break
 
@@ -712,7 +830,6 @@ def main():
     options.save_options(app_options)
     pygame.quit()
     sys.exit()
-    # exit that shit thx frr
 
 if __name__ == '__main__':
     main()

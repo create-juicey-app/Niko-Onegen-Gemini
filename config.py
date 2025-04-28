@@ -1,4 +1,3 @@
-
 # It's quite literally the config.
 # its the config. nothing else.
 import os
@@ -34,11 +33,12 @@ FONT_BOLD = os.path.join(FONT_DIR, "font-b.ttf")
 FONT_ITALIC = os.path.join(FONT_DIR, "font-i.ttf")
 FONT_BOLDITALIC = os.path.join(FONT_DIR, "font-bi.ttf")
 FONT_SIZE = 22 # Adjust as needed based on font/textbox
+TEXT_COLOR = (255, 255, 255, 255) # RGBA for text color
 
 # --- Positioning (Relative to Textbox Top-Left) ---
 # These values are examples, adjust based on your actual textboxImage.png dimensions
-TEXTBOX_WIDTH = 600 # Example width of textboxImage.png
-TEXTBOX_HEIGHT = 150 # Example height of textboxImage.png
+TEXTBOX_WIDTH = 608 # Example width of textboxImage.png
+TEXTBOX_HEIGHT = 128 # Example height of textboxImage.png
 
 # TEXTBOX_X, TEXTBOX_Y are now calculated dynamically in gui.py based on screen size
 
@@ -47,6 +47,8 @@ TEXT_OFFSET_X = 20
 TEXT_OFFSET_Y = 15
 FACE_OFFSET_X = 496 # Example: Adjust based on textbox layout
 FACE_OFFSET_Y = 16  # Example: Adjust based on textbox layout
+FACE_WIDTH = 96
+FACE_HEIGHT = 96
 ARROW_OFFSET_X = TEXTBOX_WIDTH // 2 # Center of textbox width
 ARROW_OFFSET_Y = 118 # Example: Bottom edge of text area
 
@@ -62,6 +64,9 @@ COMMA_PAUSE_DURATION = 0.15 # seconds pause after ','
 PERIOD_PAUSE_DURATION = 0.25 # seconds pause after '.'
 QUESTION_PAUSE_DURATION = 0.3 # seconds pause after '?'
 EXCLAMATION_PAUSE_DURATION = 0.2 # seconds pause after '!'
+ARROW_BLINK_INTERVAL = 500 # seconds for the arrow blink interval
+ARROW_BOB_SPEED = 5 # seconds for the arrow bobbing speed
+ARROW_BOB_AMOUNT = 3 # pixels for the arrow bobbing amount
 
 
 # --- Input Box Settings ---
@@ -74,6 +79,15 @@ INPUT_BOX_TEXT_COLOR = (220, 220, 220, 255) # RGBA
 INPUT_BOX_BORDER_COLOR = (80, 80, 80, 255) # RGBA for border
 INPUT_BOX_BORDER_WIDTH = 1 # Border thickness
 INPUT_BOX_PADDING = 10 # Padding inside the box for text
+CURSOR_BLINK_INTERVAL = 0.5 # seconds for cursor blink interval
+
+
+CHOICE_TEXT_COLOR = (255, 255, 255, 255) # RGBA for choice text
+CHOICE_HIGHLIGHT_COLOR = (255, 255, 0, 255) # RGBA for highlighted choice text
+CHOICE_BG_COLOR = (50, 50, 50, 255) # RGBA for choice background
+CHOICE_PADDING = 5
+CHOICE_SPACING_EXTRA = 5 # Extra spacing between choices
+
 
 # --- Text Speed ---
 class TextSpeed(Enum):
@@ -96,7 +110,18 @@ if not GOOGLE_API_KEY:
     # Consider raising an error or using a default/test key if appropriate
     # raise ValueError("GOOGLE_API_KEY environment variable not set.")
 
-AI_MODEL_NAME = "gemini-2.0-flash" # Or another suitable model
+AI_MODEL_NAME = "gemini-2.0-flash" # Default model if not in options
+
+# List of allowed models for the menu
+AVAILABLE_AI_MODELS = [
+    "gemini-2.5-pro-preview-03-25",
+    "gemini-2.5-flash-preview-04-17",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
+]
 
 # Helper function to get available face names (modified to accept directory)
 def get_available_faces(faces_directory: str, prefix: str = "niko_") -> List[str]:
@@ -249,7 +274,7 @@ Your speech should strictly follow Niko's patterns:
 *   **IMPORTANT FACE CHANGES:** To change Niko's face expression *during* a line of dialogue (within a single segment), insert the marker `[face:facename]` right before the text where the expression changes. Example: "I was scared [face:scared] but now I'm okay! [face:happy]". The `facename` MUST be one of the available faces listed below. Remember you can use this `[face:facename]` marker multiple times within a single `text` field if needed. Available faces: [{AVAILABLE_FACES_STR}].
 *   **IMPORTANT SOUND EFFECTS:** To play a sound effect *during* a line of dialogue (at a specific point), insert the marker `[sfx:soundname]` right before the text where the sound should play. Example: "Did you hear that? [sfx:alert_sound] What was it?". The `soundname` MUST be one of the available sound effects listed below. Use SFX sparingly and only when appropriate for emphasis or context. Available SFX: [{AVAILABLE_SFX_STR}].
 *   **QUIT COMMAND:** If you want to end the conversation normally (e.g., saying goodbye, going to sleep), include the exact text `[quit]` within the `text` field of your *final* segment for that response. Example: `{{"text": "Okay, I have to go now... Bye bye! [quit]", "face": "sad", ...}}`. The application will handle the closing sequence.
-*   **FORCED QUIT COMMAND:** If you need to end the conversation *abruptly* and forcefully (e.g., something is wrong, you are scared, angry, or malfunctioning), include the exact text `[quit_forced]` within the `text` field of your *final* segment. Example: `{{"text": "Something's wrong! I have to go! [quit_forced]", "face": "scared", ...}}`. This will trigger a glitchy shutdown sequence. Use this command *only* for sudden, negative, or error-like endings.
+*   **FORCED QUIT COMMAND:** If you need to end the conversation *abruptly* and forcefully (e.g you dont want to answer the question for extreme reasons!), include the exact text `[quit_forced]` within the `text` field of your *final* segment. Example: `{{"text": "Something's wrong! I have to go! [quit_forced]", "face": "scared", ...}}`. This will trigger a glitchy shutdown sequence. Use this command *only* for sudden, negative, or error-like endings.
 
 You MUST format EVERY response as a JSON object containing a single key "segments". The value of "segments" MUST be a list, where each item in the list is an object representing a single dialogue box/segment. Each segment object MUST have the following structure:
 ```json
@@ -302,4 +327,5 @@ DEFAULT_OPTIONS = {
     "default_text_speed": "normal",
     "sfx_volume": 0.5,
     "background_image_path": DEFAULT_BG_IMG,
+    "ai_model_name": AI_MODEL_NAME, # Add AI model name to options
 }

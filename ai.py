@@ -12,7 +12,7 @@ from typing import List
 class NikoAI:
     """Handles interaction with the Google Generative AI model."""
 
-    def __init__(self):
+    def __init__(self, ai_model_name: str = config.AI_MODEL_NAME): # Accept model name
         if not config.GOOGLE_API_KEY:
             raise ValueError("Google API Key not configured.")
         try:
@@ -20,7 +20,7 @@ class NikoAI:
         except Exception as e:
             raise RuntimeError(f"Failed to initialize Google GenAI Client: {e}")
 
-        self.model_name = config.AI_MODEL_NAME
+        self.model_name = ai_model_name # Use passed model name
         self.conversation_history = []
         self.safety_settings = [
             SafetySetting(category=HarmCategory.HARM_CATEGORY_HARASSMENT, threshold=HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE),
@@ -64,6 +64,24 @@ class NikoAI:
                 safety_settings=self.safety_settings,
                 system_instruction=types.Content(parts=[types.Part.from_text(text=formatted_prompt)]),
             )
+
+            # --- Debug Print Statements ---
+            print("\n--- Sending Request to AI ---")
+            print(f"Model: {self.model_name}")
+            print(f"User Input: {user_input}")
+            print("System Instruction (Prompt):")
+            print(formatted_prompt)
+            print("Conversation History Sent:")
+            # Optionally print the full history, or just a summary
+            # print(json.dumps([{'role': c.role, 'parts': [p.text for p in c.parts]} for c in full_history_for_api], indent=2))
+            print(f"  - Turns: {len(full_history_for_api)}")
+            print("Safety Settings:")
+            for setting in self.safety_settings:
+                print(f"  - Category: {setting.category.name}, Threshold: {setting.threshold.name}")
+            print("Request Config:")
+            print(f"  - Response MIME Type: {request_config.response_mime_type}")
+            print("--- End Debug Info ---\n")
+            # --- End Debug Print Statements ---
 
             response = self.client.models.generate_content(
                 model=self.model_name,
