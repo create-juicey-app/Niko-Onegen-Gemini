@@ -24,7 +24,7 @@ BG_DIR = os.path.join(RES_DIR, "backgrounds") # Added Backgrounds directory
 TEXTBOX_IMG = os.path.join(RES_DIR, "textboxImage.png")
 TEXTBOX_OPAQUE_IMG = os.path.join(RES_DIR, "textboxImageOpaque.png") # Optional
 ARROW_IMG = os.path.join(RES_DIR, "textboxArrow.png")
-DEFAULT_BG_IMG = os.path.join(RES_DIR, "bg.png") # Default background image path (in res directory)
+DEFAULT_BG_IMG = os.path.join(RES_DIR, "backgrounds", "bg.png") # Default background image path (in res directory)
 TEXT_SFX_PATH = os.path.join(SFX_DIR, "text.wav") # Added text sound effect path
 ROBOT_SFX_PATH = os.path.join(SFX_DIR, "textrobot.wav") # Added robot text sound effect path
 
