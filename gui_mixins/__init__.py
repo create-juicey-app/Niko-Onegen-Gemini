@@ -8,4 +8,7 @@ from .choices import ChoicesMixin
 from .effects import EffectsMixin
 from .rendering import RenderingMixin
 from .events import EventsMixin
-from .options_menu import OptionsMenuMixin # Add the new mixin
+from .options_menu import OptionsMenuMixin
+# Add the new mixins
+from .rendering_components import RenderingComponentsMixin
+from .event_handlers import EventHandlersMixin

@@ -21,6 +21,13 @@ import random
 ai_results_queue = queue.Queue()
 niko_ai = None  # Make niko_ai global
 
+# --- Add state for retrying failed AI calls ---
+last_failed_user_input: str | None = None
+last_failed_prompt: str | None = None
+last_failed_is_initial: bool = False
+waiting_for_retry_choice: bool = False
+# --- End added state ---
+
 def ai_worker(niko_ai_instance: NikoAI, formatted_prompt: str, user_input: str | None = None, initial_greeting: bool = False):
     """Function to run AI generation in a separate thread."""
     global ai_results_queue
@@ -511,29 +518,27 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
                         while options_menu_running and gui.running:
                             options_dt = gui.clock.tick(60) / 1000.0
                             for options_event in pygame.event.get():
-                                if options_event.type == pygame.QUIT:
-                                     gui.fade_out(); gui.running = False; options_menu_running = False; menu_active = False; break
-                                drag_result = gui.handle_event(options_event)
-                                if drag_result and drag_result[0] in ["initiate_quit", "quit", "drag_start", "dragging", "drag_end"]:
-                                     if drag_result[0] == "initiate_quit": gui.fade_out()
-                                     if drag_result[0] in ["initiate_quit", "quit"]: gui.running = False; options_menu_running = False; menu_active = False; break
-                                     continue
+                                result = gui.handle_event(options_event)
 
-                                options_action = gui.handle_options_menu_event(options_event)
-                                if options_action == "save":
-                                    gui.exit_options_menu(save_changes=True)
-                                    options_menu_running = False
-                                    if niko_ai: niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
-                                    break
-                                elif options_action == "cancel":
-                                    gui.exit_options_menu(save_changes=False)
-                                    options_menu_running = False
-                                    break
-                            if not gui.running: break
+                                if result:
+                                    action, data = result
+                                    if action == "initiate_quit":
+                                        gui.fade_out(); gui.running = False; options_menu_running = False; menu_active = False; break
+                                    elif action == "quit":
+                                        gui.running = False; options_menu_running = False; menu_active = False; break
+                                    elif action == "exit_options":
+                                        save_changes = data
+                                        gui.exit_options_menu(save_changes=save_changes)
+                                        options_menu_running = False
+                                        if save_changes and niko_ai:
+                                             niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                                             print(f"AI Model updated to: {niko_ai.model_name}")
+                                        break
+
+                            if not gui.running or not options_menu_running: break
 
                             gui.update(options_dt)
-                            gui.draw_options_menu(gui.screen)
-                            pygame.display.flip()
+                            gui.render()
 
                         if not gui.running: menu_active = False
                         gui.is_menu_active = True
@@ -567,7 +572,7 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
         gui.choice_options = menu_items
         gui.selected_choice_index = selected_index
         gui.is_choice_active = True
-        gui.draw_multiple_choice(gui.screen) # Pass the surface here
+        gui.draw_multiple_choice(gui.screen)
 
         pygame.display.flip()
 
@@ -580,6 +585,9 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
 
 def main():
     global niko_ai
+    # --- Add access to global retry state variables ---
+    global last_failed_user_input, last_failed_prompt, last_failed_is_initial, waiting_for_retry_choice
+    # --- End access ---
     app_options = options.load_options()
 
     try:
@@ -625,14 +633,19 @@ def main():
     if not gui.running: pygame.quit(); sys.exit()
 
     def process_ai_response(response_segments: List[NikoResponse] | None):
-        """Queues dialogue segments received from the AI and displays the first. Checks for [quit] or [quit_forced] command."""
+        """Queues dialogue segments received from the AI and displays the first. Handles errors and retry prompts."""
         nonlocal ready_for_input, ai_is_thinking, quit_initiated_by_ai, force_quit_command_detected
+        # --- Add access to global retry state variables ---
+        global waiting_for_retry_choice
+        # --- End access ---
+
         gui.ai_is_thinking = False
         dialogue_queue.clear()
         ready_for_input = False
         ai_is_thinking = False
         quit_command_detected = False
         force_quit_command_detected = False
+        error_occurred = False # Flag for critical errors
 
         if response_segments:
             last_segment_index = len(response_segments) - 1
@@ -657,17 +670,11 @@ def main():
                      gui.is_input_active = True
                      gui.draw_arrow = False
 
-        elif response_segments is None:
-            print("Error: AI worker returned None (critical error).")
-            error_response = NikoResponse(text="(Uh oh, my train of thought derailed completely!)", face="scared", speed="normal", bold=False, italic=False)
+        elif response_segments is None or (not response_segments and not quit_command_detected and not force_quit_command_detected):
+            error_occurred = True
+            print("Error: AI worker returned None or empty response (critical error).")
+            error_response = NikoResponse(text="(Uh oh, my train of thought derailed completely! Retry?)", face="scared", speed="normal", bold=False, italic=False)
             gui.set_dialogue(error_response)
-            ready_for_input = True
-            gui.is_input_active = True
-            gui.draw_arrow = False
-        else:
-            ready_for_input = True
-            gui.is_input_active = True
-            gui.draw_arrow = False
 
         if force_quit_command_detected:
             gui.start_forced_quit()
@@ -680,12 +687,24 @@ def main():
             gui.is_input_active = False
             if not dialogue_queue:
                 gui.draw_arrow = True
+        elif error_occurred:
+            waiting_for_retry_choice = True
+            gui.choice_options = ["Retry", "Cancel"]
+            gui.selected_choice_index = 0
+            gui.is_choice_active = True
+            gui.draw_arrow = False
+            ready_for_input = False
+            gui.is_input_active = False
+
 
     ai_is_thinking = True
     gui.ai_is_thinking = True
     gui.render()
     pygame.display.flip()
 
+    last_failed_user_input = None
+    last_failed_prompt = formatted_initial_prompt
+    last_failed_is_initial = True
     ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt), kwargs={'initial_greeting': True}, daemon=True)
     ai_thread.start()
 
@@ -713,7 +732,62 @@ def main():
                  ai_thread = None
 
         for event in pygame.event.get():
-            if gui.is_options_menu_active: continue # Skip events if options menu is handling them
+            if waiting_for_retry_choice:
+                 if event.type == pygame.QUIT:
+                      gui.running = False; break
+                 elif event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
+                      result = gui.handle_event(event)
+                      if result:
+                           action, _ = result
+                           if action == "initiate_quit": gui.fade_out(); gui.running = False; break
+                           elif action == "quit": gui.running = False; break
+                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                      result = ("choice_made", 1)
+                 else:
+                      result = gui.handle_event(event)
+
+                 if result:
+                      action, data = result
+                      if action == "choice_made":
+                           chosen_index = data
+                           waiting_for_retry_choice = False
+                           gui.is_choice_active = False
+                           gui.choice_options = []
+                           gui.choice_rects = []
+
+                           if chosen_index == 0:
+                                print("Retrying AI generation...")
+                                ai_is_thinking = True
+                                gui.ai_is_thinking = True
+                                gui.set_dialogue(NikoResponse(text="Okay, let me try that again...", face="normal", speed="fast"))
+                                ai_thread = threading.Thread(
+                                     target=ai_worker,
+                                     args=(niko_ai, last_failed_prompt, last_failed_user_input),
+                                     kwargs={'initial_greeting': last_failed_is_initial},
+                                     daemon=True
+                                )
+                                ai_thread.start()
+                           elif chosen_index == 1:
+                                print("AI generation cancelled by user after error.")
+                                if last_failed_is_initial:
+                                     print("Initial greeting failed and cancelled. Quitting.")
+                                     gui.fade_out()
+                                     gui.running = False
+                                     break
+                                else:
+                                     gui.set_dialogue(NikoResponse(text="(Alright.)", face="normal", speed="fast"))
+                                     ready_for_input = True
+                                     gui.is_input_active = True
+                                     gui.draw_arrow = False
+                                     gui.user_input_text = ""
+                           last_failed_user_input = None
+                           last_failed_prompt = None
+                           last_failed_is_initial = False
+                           break
+                 continue
+
+
+            if gui.is_options_menu_active: continue
 
             result = gui.handle_event(event)
 
@@ -769,6 +843,10 @@ def main():
                                 gui.is_input_active = False
                                 gui.clear_input()
 
+                                last_failed_user_input = user_input
+                                last_failed_prompt = formatted_initial_prompt
+                                last_failed_is_initial = False
+
                                 ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt, user_input), daemon=True)
                                 ai_thread.start()
 
@@ -787,12 +865,14 @@ def main():
 
         if not gui.running: break
 
-        if not gui.is_options_menu_active:
-             gui.update(dt)
+        if not waiting_for_retry_choice:
+            if not gui.is_options_menu_active:
+                 gui.update(dt)
 
         if not gui.is_options_menu_active:
              gui.render()
              pygame.display.flip()
+
 
     options.save_options(app_options)
     pygame.quit()

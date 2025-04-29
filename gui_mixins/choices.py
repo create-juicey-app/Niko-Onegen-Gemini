@@ -4,7 +4,7 @@ import config
 class ChoicesMixin:
     """Mixin class for handling multiple-choice interactions."""
 
-    def draw_multiple_choice(self, surface):
+    def draw_multiple_choice(self, target_surface): # Changed 'surface' to 'target_surface'
         """Draws the multiple choice options centered on the screen, truncating long text."""
         if not self.is_choice_active or not self.choice_options:
             return
@@ -35,7 +35,7 @@ class ChoicesMixin:
 
         # Draw main background for the whole block
         bg_rect = pygame.Rect(block_x, start_y, block_width, total_height)
-        pygame.draw.rect(surface, self.choice_bg_color, bg_rect, border_radius=8)
+        pygame.draw.rect(target_surface, self.choice_bg_color, bg_rect, border_radius=8) # Use target_surface
 
         # Starting y for the first item's background rect, inside the main block padding
         y = start_y + self.choice_padding
@@ -82,11 +82,11 @@ class ChoicesMixin:
 
             # Draw highlight if selected (using item_bg_rect)
             if i == self.selected_choice_index:
-                pygame.draw.rect(surface, self.choice_highlight_color, item_bg_rect, border_radius=5)
+                pygame.draw.rect(target_surface, self.choice_highlight_color, item_bg_rect, border_radius=5) # Use target_surface
 
             # Calculate text position centered within item_bg_rect
             text_rect = display_surf.get_rect(center=item_bg_rect.center)
-            surface.blit(display_surf, text_rect) # Blit the potentially truncated text
+            target_surface.blit(display_surf, text_rect) # Use target_surface
 
             # Increment y for the next item's background top
             y += effective_item_spacing

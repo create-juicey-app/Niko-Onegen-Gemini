@@ -22,14 +22,18 @@ from gui_mixins.choices import ChoicesMixin
 from gui_mixins.effects import EffectsMixin
 from gui_mixins.rendering import RenderingMixin
 from gui_mixins.events import EventsMixin
-from gui_mixins.options_menu import OptionsMenuMixin # Import the new mixin
+from gui_mixins.options_menu import OptionsMenuMixin
+from gui_mixins.rendering_components import RenderingComponentsMixin
+from gui_mixins.event_handlers import EventHandlersMixin
 
 if platform.system() == "Windows":
     import ctypes
     # Note: ctypes usage is now within EventsMixin and EffectsMixin
 
-# Inherit from all mixins including the new OptionsMenuMixin
-class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin, RenderingMixin, EventsMixin, OptionsMenuMixin):
+# Inherit from all mixins including the new ones
+class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
+          RenderingMixin, EventsMixin, OptionsMenuMixin,
+          RenderingComponentsMixin, EventHandlersMixin):
     """
     Handles the graphical user interface, rendering, and events by combining
     functionality from various specialized mixin classes.
@@ -49,6 +53,9 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
              except pygame.error as e:
                  print(f"Warning: Failed to initialize pygame.mixer: {e}. Sound disabled.")
                  # Handle case where mixer fails entirely if needed
+
+        # --- Enable Key Repeat ---
+        pygame.key.set_repeat(config.KEY_REPEAT_DELAY, config.KEY_REPEAT_INTERVAL)
 
         # --- Screen and Window Setup ---
         try:

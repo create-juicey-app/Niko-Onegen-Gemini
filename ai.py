@@ -4,10 +4,15 @@ from google.genai.types import HarmCategory, HarmBlockThreshold, GenerateContent
 import json
 import re
 from pydantic import ValidationError
+import time
+from google.genai import errors
 
 import config
 from config import NikoResponse, AIResponse
 from typing import List
+
+MAX_RETRIES = 3
+INITIAL_BACKOFF = 1  # seconds
 
 class NikoAI:
     """Handles interaction with the Google Generative AI model."""
@@ -83,11 +88,40 @@ class NikoAI:
             print("--- End Debug Info ---\n")
             # --- End Debug Print Statements ---
 
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=full_history_for_api,
-                config=request_config,
-            )
+            response = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=full_history_for_api,
+                        config=request_config,
+                    )
+                    break
+                except errors.APIError as e:
+                    status = getattr(e, "http_status", None) or getattr(e, "code", None)
+                    # recoverable: 429, 500, 503
+                    if status in (429, 500, 503) and attempt < MAX_RETRIES - 1:
+                        backoff = INITIAL_BACKOFF * (2 ** attempt)
+                        print(f"APIError {status}, retrying in {backoff}s (attempt {attempt+1})")
+                        time.sleep(backoff)
+                        continue
+                    # non‐recoverable or last attempt: fall back
+                    print(f"APIError {status}: {e}")
+                    self.conversation_history.append(current_turn)
+                    msg_map = {
+                        400: "(Error: malformed request or billing issue.)",
+                        403: "(Error: access key invalid.)",
+                        404: "(Error: model not found.)",
+                        504: "(Error: request timed out.)",
+                    }
+                    face_map = {400: "confused", 403: "scared", 404: "confused", 504: "sad"}
+                    text = self._clean_text(msg_map.get(status, "(Error: API failure.)"))
+                    face = face_map.get(status, "scared")
+                    return [NikoResponse(text=text, face=face, speed="normal", bold=False, italic=False)]
+            if not response:
+                self.conversation_history.append(current_turn)
+                text = self._clean_text("(Error: no response after retries.)")
+                return [NikoResponse(text=text, face="scared", speed="normal", bold=False, italic=False)]
 
             if not response.candidates:
                  print("Error: AI response was blocked.")

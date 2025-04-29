@@ -49,7 +49,14 @@ class EventsMixin:
 
         # 4. Escape Key Handling (Context Dependent)
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            if getattr(self, 'is_menu_active', False):
+            if getattr(self, 'is_options_menu_active', False): # Check options menu first
+                 # Delegate Escape in options menu to its handler
+                 if hasattr(self, 'handle_options_menu_event'):
+                      action = self.handle_options_menu_event(event)
+                      if action == "cancel":
+                           return ("exit_options", False) # Signal to exit options without saving
+                 return None # Consume escape if options menu handled it (or should have)
+            elif getattr(self, 'is_menu_active', False):
                 self.play_sound("menu_cancel") # Play cancel sound if available
                 # Action: toggle_menu (used to close the menu), Value: None
                 return ("toggle_menu", None)
@@ -159,16 +166,30 @@ class EventsMixin:
              return None
 
 
-        # 6. Context-Specific Input Handling (Choices, Text Input, Dialogue)
-        # Process these modes exclusively. If an event is handled (even returning None),
-        # prevent it from falling through to the next mode check or dialogue handling.
+        # 6. Context-Specific Input Handling (Options Menu, Choices, Text Input, Dialogue)
+        # Process these modes exclusively.
+
+        # --- Options Menu Mode ---
+        if getattr(self, 'is_options_menu_active', False):
+            if hasattr(self, 'handle_options_menu_event'):
+                action_result = self.handle_options_menu_event(event) # Get result first
+                # Check if the options handler returned an action ("save" or "cancel")
+                if isinstance(action_result, str): # handle_options_menu_event returns "save" or "cancel"
+                    if action_result == "save":
+                        return ("exit_options", True)
+                    elif action_result == "cancel":
+                        return ("exit_options", False)
+                # If handle_options_menu_event returned None, it means the event was
+                # handled internally (like navigation), so consume the event.
+                return None # Consume event, preventing fall-through
+            else:
+                print("Warning: is_options_menu_active is True, but handle_options_menu_event method missing.")
+                return None # Consume event anyway
 
         # --- Choice Mode ---
         if getattr(self, 'is_choice_active', False):
-            # Ensure the choice event handler method exists
+            # Ensure the choice event handler method exists (now in EventHandlersMixin)
             if hasattr(self, 'handle_choice_event'):
-                # Call the handler and return its result immediately.
-                # This consumes the event within choice mode.
                 return self.handle_choice_event(event)
             else:
                 print("Warning: is_choice_active is True, but handle_choice_event method missing.")
@@ -176,16 +197,15 @@ class EventsMixin:
 
         # --- Input Mode ---
         if getattr(self, 'is_input_active', False):
-            # Ensure the input event handler method exists
+            # Ensure the input event handler method exists (now in EventHandlersMixin)
             if hasattr(self, 'handle_input_event'):
-                # Call the handler and return its result immediately.
-                # This consumes the event within input mode.
                 return self.handle_input_event(event)
             else:
                 print("Warning: is_input_active is True, but handle_input_event method missing.")
                 return None # Consume event anyway if state is inconsistent
 
-        # --- Normal Dialogue Mode (Only if not in Choice or Input mode) ---
+        # --- Normal Dialogue Mode (Only if not in other modes) ---
+        # This block should now only be reached if Options, Choice, and Input modes are inactive.
         # Handle advance/skip actions for dialogue
         if event.type == pygame.KEYDOWN:
             # Check for Space or Enter keys
