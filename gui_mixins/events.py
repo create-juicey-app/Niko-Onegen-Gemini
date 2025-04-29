@@ -39,15 +39,7 @@ class EventsMixin:
             else:
                  return None # Ignore other input (like clicks, typing) in history view
 
-        # 3. Menu Toggle (Tab Key)
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_TAB:
-            # Only toggle menu if not in input mode or choice mode (unless menu allows it)
-            if not getattr(self, 'is_input_active', False) and \
-               not getattr(self, 'is_choice_active', False):
-                # Action: toggle_menu, Value: None
-                return ("toggle_menu", None)
-
-        # 4. Escape Key Handling (Context Dependent)
+        # 3. Escape Key Handling (Context Dependent)
         if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
             if getattr(self, 'is_options_menu_active', False): # Check options menu first
                  # Delegate Escape in options menu to its handler
@@ -62,7 +54,7 @@ class EventsMixin:
                 return ("toggle_menu", None)
             # Note: Escape handling within input/choice modes is done in their specific handlers
 
-        # 5. Window Dragging Logic
+        # 4. Window Dragging Logic
         # --- Start Drag ---
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1: # Left click
             mouse_pos = event.pos
@@ -165,8 +157,21 @@ class EventsMixin:
         if getattr(self, 'dragging', False) and event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
              return None
 
+        # --- Check for Menu Toggle *before* context-specific handlers ---
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_TAB:
+            # If the main menu is active, Tab closes it
+            if getattr(self, 'is_menu_active', False):
+                self.play_sound("menu_cancel") # Play cancel sound
+                return ("toggle_menu", None)
+            # Otherwise, if not in choice mode (allow during input), Tab opens it
+            # Also ensure options menu isn't active, as Tab might be used there
+            elif not getattr(self, 'is_choice_active', False) and \
+                 not getattr(self, 'is_options_menu_active', False):
+                # Action: toggle_menu, Value: None
+                return ("toggle_menu", None)
+        # --- End Menu Toggle Check ---
 
-        # 6. Context-Specific Input Handling (Options Menu, Choices, Text Input, Dialogue)
+        # 5. Context-Specific Input Handling (Options Menu, Choices, Text Input, Dialogue)
         # Process these modes exclusively.
 
         # --- Options Menu Mode ---
@@ -236,5 +241,5 @@ class EventsMixin:
                         return None
 
 
-        # 7. Default: No specific action taken for this event in this context
+        # 6. Default: No specific action taken for this event in this context
         return None

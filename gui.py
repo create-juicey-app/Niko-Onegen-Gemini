@@ -25,6 +25,7 @@ from gui_mixins.events import EventsMixin
 from gui_mixins.options_menu import OptionsMenuMixin
 from gui_mixins.rendering_components import RenderingComponentsMixin
 from gui_mixins.event_handlers import EventHandlersMixin
+from gui_mixins.history import HistoryMixin
 
 if platform.system() == "Windows":
     import ctypes
@@ -33,7 +34,7 @@ if platform.system() == "Windows":
 # Inherit from all mixins including the new ones
 class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
           RenderingMixin, EventsMixin, OptionsMenuMixin,
-          RenderingComponentsMixin, EventHandlersMixin):
+          RenderingComponentsMixin, EventHandlersMixin, HistoryMixin):
     """
     Handles the graphical user interface, rendering, and events by combining
     functionality from various specialized mixin classes.
@@ -195,6 +196,8 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         self.is_menu_active = False # Is the *main* pause menu overlay active?
         self.menu_overlay_color = (0, 0, 0, 150) # Semi-transparent black overlay
         self.is_history_active = False # Is the dialogue history view active?
+        # Initialize history state is now handled by the HistoryMixin 
+        # when _initialize_history_state() is called
 
         # --- Window Interaction State ---
         self.dragging = False # Is the window currently being dragged?
@@ -233,29 +236,36 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
 
     def update(self, dt):
         """Main update loop called every frame."""
-        # Ignore updates if history view or options menu is active
-        if self.is_history_active or self.is_options_menu_active:
-             # Still update input cursor blink if options menu input is focused
-             if self.is_options_menu_active:
-                  try: # Defensive check
-                       focused_widget = self.options_widgets[self.focused_widget_index]
-                       if focused_widget["type"] == "input":
-                            focused_widget["cursor_timer"] += dt
-                            if focused_widget["cursor_timer"] >= config.CURSOR_BLINK_INTERVAL:
-                                 focused_widget["cursor_visible"] = not focused_widget["cursor_visible"]
-                                 focused_widget["cursor_timer"] %= config.CURSOR_BLINK_INTERVAL
-                  except (IndexError, KeyError, AttributeError):
-                       pass # Ignore errors if widget structure is unexpected
-             return
-
-        # --- Forced Quit Update ---
+        # --- Forced Quit Update (Highest Priority) ---
         if self.is_forced_quitting:
-            # Delegate update logic to EffectsMixin
             self.update_forced_quit(dt)
-            # No further updates needed if forced quitting
+            return # No further updates needed
+
+        # --- History View Active ---
+        # History view completely pauses background activity
+        if self.is_history_active:
             return
 
-        # --- Pause Update ---
+        # --- Options Menu Specific Updates ---
+        # Handle options menu input cursor blinking if it's active
+        if self.is_options_menu_active:
+             try: # Defensive check
+                 # Only update cursor if the focused widget is an input field
+                 if 0 <= self.focused_widget_index < len(self.options_widgets):
+                      focused_widget = self.options_widgets[self.focused_widget_index]
+                      if focused_widget["type"] == "input":
+                           focused_widget["cursor_timer"] += dt
+                           if focused_widget["cursor_timer"] >= config.CURSOR_BLINK_INTERVAL:
+                                focused_widget["cursor_visible"] = not focused_widget["cursor_visible"]
+                                focused_widget["cursor_timer"] %= config.CURSOR_BLINK_INTERVAL
+                 else: # Reset focus if index is out of bounds
+                      self.focused_widget_index = 0
+             except (IndexError, KeyError, AttributeError):
+                  pass # Ignore errors if widget structure is unexpected
+             # Note: We *don't* return here anymore if options menu is active,
+             # allowing dialogue animation below to continue.
+
+        # --- Pause Update (Dialogue Pause) ---
         if self.is_paused:
             self.pause_timer += dt
             if self.pause_timer >= self.current_pause_duration:
@@ -266,19 +276,26 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
                 # Stop text sound during pause
                 if self.active_text_sfx and self.active_text_sfx.get_num_channels() > 0:
                     self.active_text_sfx.stop()
-                return # Don't process animation while paused
+                # Don't process animation while paused, but allow options menu updates above
+                # If options menu is active, we still want its cursor to blink, but not text anim.
+                # If only paused (no menu), we stop here.
+                if not self.is_options_menu_active:
+                     return
 
         # --- Text Animation Update ---
+        # This section now runs even if the options menu is active
         if self.is_animating:
             # Instant Text Speed
             if self.current_text_speed_ms == config.TextSpeed.INSTANT.value:
                 # Play sound once at the beginning if instant speed
                 if self.total_chars_to_render > 0 and self.current_char_index == 0 and self.active_text_sfx:
+                     # Only play if menus aren't active? Or allow it? Let's allow it for now.
                      self.active_text_sfx.play()
                 # Complete animation instantly
                 self.current_char_index = self.total_chars_to_render
                 self.is_animating = False
-                self.draw_arrow = True # Show arrow immediately
+                # Only draw arrow if no menus are active
+                self.draw_arrow = not (self.is_options_menu_active or self.is_menu_active)
             # Normal Animation Speed
             elif self.current_char_index < self.total_chars_to_render:
                 self.text_animation_timer += dt * 1000 # Convert dt (seconds) to milliseconds
@@ -297,7 +314,8 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
                             if self._sfx_play_toggle:
                                 play_sound_this_frame = True
                                 break # Only need one toggle=True to play sound once
-                    if play_sound_this_frame and self.active_text_sfx:
+                    # Only play sound if no menus are active
+                    if play_sound_this_frame and self.active_text_sfx and not (self.is_options_menu_active or self.is_menu_active):
                         self.active_text_sfx.play()
 
                     # Update the actual character index
@@ -316,15 +334,18 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
 
             else: # Animation finished (current_char_index >= total_chars_to_render)
                 self.is_animating = False
-                self.draw_arrow = True # Show arrow
+                # Only draw arrow if no menus are active
+                self.draw_arrow = not (self.is_options_menu_active or self.is_menu_active)
                 self.text_animation_timer = 0.0 # Reset timer
 
         # --- Arrow Blinking and Bobbing Update ---
-        # Only update arrow if it should be drawn and not in other modes
+        # Only update arrow if it should be drawn AND no menus are active
         should_update_arrow = (self.draw_arrow and
                               not self.is_input_active and
                               not self.is_paused and
-                              not self.is_choice_active)
+                              not self.is_choice_active and
+                              not self.is_options_menu_active and # Added check
+                              not self.is_menu_active) # Added check
 
         if should_update_arrow:
             # Blinking
@@ -336,16 +357,20 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
             bob_offset = (math.sin(pygame.time.get_ticks() * config.ARROW_BOB_SPEED) * config.ARROW_BOB_AMOUNT)
             self.arrow_offset_y = bob_offset
         else:
-            self.arrow_visible = False # Ensure arrow is hidden if conditions not met
+            # Ensure arrow is hidden if conditions not met (e.g., menu opened)
+            self.arrow_visible = False
+            self.arrow_offset_y = 0 # Stop bobbing
 
         # --- Input Cursor Blinking Update (Main Input) ---
-        if self.is_input_active:
+        # Only update main input cursor if it's active AND no menus are active
+        if self.is_input_active and not self.is_options_menu_active and not self.is_menu_active:
             self.input_cursor_timer += dt
             if self.input_cursor_timer >= config.CURSOR_BLINK_INTERVAL: # Use config value
                 self.input_cursor_visible = not self.input_cursor_visible
                 self.input_cursor_timer = 0.0
         else:
-            self.input_cursor_visible = False # Ensure cursor is hidden if input not active
+            # Ensure cursor is hidden if input not active or menu is open
+            self.input_cursor_visible = False
 
     # Methods moved to mixins:
     # - load_image, load_sound, set_sfx_volume, _load_fonts, _load_face_images, _load_other_sfx

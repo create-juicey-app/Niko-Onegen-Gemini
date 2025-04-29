@@ -12,3 +12,4 @@ from .options_menu import OptionsMenuMixin
 # Add the new mixins
 from .rendering_components import RenderingComponentsMixin
 from .event_handlers import EventHandlersMixin
+from .history import HistoryMixin

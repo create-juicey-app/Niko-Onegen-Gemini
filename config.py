@@ -87,9 +87,13 @@ KEY_REPEAT_INTERVAL = 40 # Interval between repeated keydown events
 
 CHOICE_TEXT_COLOR = (255, 255, 255, 255) # RGBA for choice text
 CHOICE_HIGHLIGHT_COLOR = (68, 36, 158, 255) # RGBA for highlighted choice text
-CHOICE_BG_COLOR = (50, 50, 50, 255) # RGBA for choice background
+CHOICE_BG_COLOR = (40, 20, 70, 255) # RGBA for choice background
 CHOICE_PADDING = 5
 CHOICE_SPACING_EXTRA = 10
+
+
+HISTORY_FILE = os.path.join("history.dat")  # File to save conversation history
+
 
 
 # --- Text Speed ---
@@ -125,6 +129,11 @@ AVAILABLE_AI_MODELS = [
     "gemini-1.5-flash",
     "gemini-1.5-flash-8b",
 ]
+
+# --- System/State ---
+EXIT_STATUS_KEY = "last_exit_status"
+EXIT_STATUS_NORMAL_AI = "normal_ai_quit"
+EXIT_STATUS_ABRUPT = "abrupt_quit"
 
 # Helper function to get available face names (modified to accept directory)
 def get_available_faces(faces_directory: str, prefix: str = "niko_") -> List[str]:
@@ -277,7 +286,7 @@ Your speech should strictly follow Niko's patterns:
 *   **IMPORTANT FACE CHANGES:** To change Niko's face expression *during* a line of dialogue (within a single segment), insert the marker `[face:facename]` right before the text where the expression changes. Example: "I was scared [face:scared] but now I'm okay! [face:happy]". The `facename` MUST be one of the available faces listed below. Remember you can use this `[face:facename]` marker multiple times within a single `text` field if needed. Available faces: [{AVAILABLE_FACES_STR}].
 *   **IMPORTANT SOUND EFFECTS:** To play a sound effect *during* a line of dialogue (at a specific point), insert the marker `[sfx:soundname]` right before the text where the sound should play. Example: "Did you hear that? [sfx:alert_sound] What was it?". The `soundname` MUST be one of the available sound effects listed below. Use SFX sparingly and only when appropriate for emphasis or context. Available SFX: [{AVAILABLE_SFX_STR}].
 *   **QUIT COMMAND:** If you want to end the conversation normally (e.g., saying goodbye, going to sleep), include the exact text `[quit]` within the `text` field of your *final* segment for that response. Example: `{{"text": "Okay, I have to go now... Bye bye! [quit]", "face": "sad", ...}}`. The application will handle the closing sequence.
-*   **FORCED QUIT COMMAND:** If you need to end the conversation *abruptly* and forcefully (e.g you dont want to answer the question for innapropriate reasons (example the player doing some bad things)!), include the exact text `[quit_forced]` within the `text` field of your *final* segment. Example: `{{"text": "NO! STOP!! [quit_forced]", "face": "scared", ...}}`. This will trigger a glitchy shutdown sequence. Use this command *only* for sudden, negative, or error-like endings, use this only in emergencies if the content is too innapropriate.
+*   **FORCED QUIT COMMAND:** If you need to end the conversation *abruptly* and forcefully (e.g you dont want to answer the question for innapropriate reasons (example the player doing some bad things)!), include the exact text `[quit_forced]` within the `text` field of your *final* segment. Example: `{{"text": "NO! STOP!! [quit_forced]", "face": "scared", ...}}`. This will trigger a glitchy shutdown sequence. Use this command *only* for sudden, negative, or error-like endings, use this only in emergencies if the content is not supported. Make sure to NOT use this as it will end the conversation immediately, and not able to do your task. only use this if you cannot continue the conversation for an extreme reason
 
 You MUST format EVERY response as a JSON object containing a single key "segments". The value of "segments" MUST be a list, where each item in the list is an object representing a single dialogue box/segment. Each segment object MUST have the following structure:
 ```json
