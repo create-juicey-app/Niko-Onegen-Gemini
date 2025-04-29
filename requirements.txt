@@ -3,3 +3,5 @@ pydantic
 python-dotenv
 google-genai
 tkinter
+mss 
+pillow

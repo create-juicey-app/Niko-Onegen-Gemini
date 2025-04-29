@@ -17,6 +17,9 @@ import re
 import textwrap
 from pydantic import ValidationError
 import random
+import mss  # For screen capture
+import mss.tools
+from PIL import Image  # For image processing
 
 ai_results_queue = queue.Queue()
 niko_ai = None  # Make niko_ai global
@@ -27,9 +30,64 @@ last_failed_user_input: str | None = None
 last_failed_prompt: str | None = None
 last_failed_is_initial: bool = False
 waiting_for_retry_choice: bool = False
+last_failed_screenshot: str | None = None  # Add screenshot path to retry state
 # --- End added state ---
 
-def ai_worker(niko_ai_instance: NikoAI, formatted_prompt: str, user_input: str | None = None, initial_greeting: bool = False, previous_exit_status: str | None = None):
+def capture_screenshot(app_options: Dict[str, Any]) -> str | None:
+    """Captures a screenshot based on application options and returns the path if successful."""
+    # Check if screen capture is disabled
+    if app_options.get("screen_capture_mode") == config.SCREEN_CAPTURE_MODE_NONE:
+        return None
+        
+    # Only proceed if Screenshot mode is selected (ignore Video WIP for now)
+    if app_options.get("screen_capture_mode") != config.SCREEN_CAPTURE_MODE_SCREENSHOT:
+        return None
+    
+    try:
+        # Ensure the screenshot directory exists
+        os.makedirs(config.SCREENSHOT_DIR, exist_ok=True)
+        
+        # Get monitor selection setting
+        monitor_selection = app_options.get("monitor_selection", config.MONITOR_PRIMARY)
+        
+        # Set up mss for capturing
+        with mss.mss() as sct:
+            # Determine which monitor(s) to capture
+            if monitor_selection == config.MONITOR_ALL:
+                # Capture the entire desktop (all monitors)
+                monitor = sct.monitors[0]  # Monitor 0 is the "all monitors" pseudo-monitor in mss
+                print("Capturing all monitors")
+            else:
+                # Capture primary monitor only
+                monitor = sct.monitors[1]  # Monitor 1 is typically the primary
+                print(f"Capturing primary monitor: {monitor}")
+            
+            # Take the screenshot
+            screenshot = sct.grab(monitor)
+            
+            # Save to temp file
+            mss.tools.to_png(screenshot.rgb, screenshot.size, output=config.TEMP_SCREENSHOT)
+            
+            # Convert to JPEG using PIL for compatibility and reduced size
+            with Image.open(config.TEMP_SCREENSHOT) as img:
+                # Resize if necessary (optional, can help with large monitors)
+                max_width = 1280  # Reasonable maximum width
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    new_size = (max_width, int(img.height * ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+                
+                # Save as JPEG with quality setting
+                img.convert('RGB').save(config.TEMP_SCREENSHOT, format='JPEG', quality=85)
+            
+            print(f"Screenshot saved to {config.TEMP_SCREENSHOT}")
+            return config.TEMP_SCREENSHOT
+            
+    except Exception as e:
+        print(f"Error capturing screenshot: {e}")
+        return None
+
+def ai_worker(niko_ai_instance: NikoAI, formatted_prompt: str, user_input: str | None = None, initial_greeting: bool = False, previous_exit_status: str | None = None, screenshot_path: str | None = None):
     """Function to run AI generation in a separate thread."""
     global ai_results_queue
     result = None
@@ -38,7 +96,7 @@ def ai_worker(niko_ai_instance: NikoAI, formatted_prompt: str, user_input: str |
             # Pass previous status to get_initial_greeting
             result = niko_ai_instance.get_initial_greeting(formatted_prompt, previous_exit_status)
         elif user_input is not None:
-            result = niko_ai_instance.generate_response(user_input, formatted_prompt)
+            result = niko_ai_instance.generate_response(user_input, formatted_prompt, screenshot_path)
     except Exception as e:
         print(f"AI Worker Thread encountered an error: {e}")
         result = [NikoResponse(text="(Critical AI Error...)", face="scared", speed="normal", bold=False, italic=False)]
@@ -413,11 +471,43 @@ def reset_ai_history():
 def main():
     global niko_ai, exit_reason  # Add exit_reason to globals
     # --- Add access to global retry state variables ---
-    global last_failed_user_input, last_failed_prompt, last_failed_is_initial, waiting_for_retry_choice
+    global last_failed_user_input, last_failed_prompt, last_failed_is_initial, waiting_for_retry_choice, last_failed_screenshot
     # --- End access ---
     app_options = options.load_options()
     # Load previous exit status, default to abrupt if not found
     previous_exit_status = app_options.get(config.EXIT_STATUS_KEY, config.EXIT_STATUS_ABRUPT)
+
+    # Initialize pygame before creating GUI
+    pygame.init()
+    
+    # Set window icon before creating display
+    icon_loaded = False
+    try:
+        # First try loading the ico file
+        if os.path.exists(config.WINDOW_ICON):
+            print(f"Loading window icon from: {config.WINDOW_ICON}")
+            pygame.display.set_icon(pygame.image.load(config.WINDOW_ICON))
+            icon_loaded = True
+            print("Window icon successfully set from ico file")
+        else:
+            # Try alternative formats if .ico doesn't exist
+            icon_base = os.path.splitext(config.WINDOW_ICON)[0]
+            alt_formats = [".png", ".jpg", ".bmp"]
+            
+            for ext in alt_formats:
+                alt_path = icon_base + ext
+                if os.path.exists(alt_path):
+                    print(f"Trying alternative icon format: {alt_path}")
+                    icon = pygame.image.load(alt_path)
+                    pygame.display.set_icon(icon)
+                    icon_loaded = True
+                    print(f"Alternative icon format successfully set")
+                    break
+    except Exception as e:
+        print(f"Warning: Unable to set window icon: {e}")
+    
+    if not icon_loaded:
+        print("Could not load any window icon - using default pygame icon")
 
     try:
         gui = GUI(app_options)
@@ -571,13 +661,14 @@ def main():
 
     last_failed_user_input = None  # Will be set by get_initial_greeting if it uses generate_response
     last_failed_prompt = formatted_initial_prompt
+    last_failed_screenshot = None  # No screenshot for initial greeting
     # Determine if it's truly initial based on history *before* calling get_initial_greeting
     last_failed_is_initial = not bool(niko_ai.conversation_history)
     # Start the thread for the initial message, passing previous exit status
     ai_thread = threading.Thread(
         target=ai_worker,
         args=(niko_ai, formatted_initial_prompt),
-        kwargs={'initial_greeting': True, 'previous_exit_status': previous_exit_status},  # Pass previous status
+        kwargs={'initial_greeting': True, 'previous_exit_status': previous_exit_status},
         daemon=True
     )
     ai_thread.start()
@@ -639,7 +730,7 @@ def main():
                                 ai_thread = threading.Thread(
                                      target=ai_worker,
                                      args=(niko_ai, last_failed_prompt, last_failed_user_input),
-                                     kwargs={'initial_greeting': last_failed_is_initial},
+                                     kwargs={'initial_greeting': last_failed_is_initial, 'screenshot_path': last_failed_screenshot},
                                      daemon=True
                                 )
                                 ai_thread.start()
@@ -658,6 +749,7 @@ def main():
                            last_failed_user_input = None
                            last_failed_prompt = None
                            last_failed_is_initial = False
+                           last_failed_screenshot = None
                            break
                  continue
 
@@ -768,11 +860,20 @@ def main():
                                 gui.is_input_active = False
                                 gui.clear_input()
 
+                                # Capture screenshot if enabled
+                                screenshot_path = capture_screenshot(app_options)
+                                
                                 last_failed_user_input = user_input
                                 last_failed_prompt = formatted_initial_prompt
                                 last_failed_is_initial = False
+                                last_failed_screenshot = screenshot_path  # Store screenshot path for potential retry
 
-                                ai_thread = threading.Thread(target=ai_worker, args=(niko_ai, formatted_initial_prompt, user_input), daemon=True)
+                                ai_thread = threading.Thread(
+                                    target=ai_worker,
+                                    args=(niko_ai, formatted_initial_prompt, user_input),
+                                    kwargs={'screenshot_path': screenshot_path},
+                                    daemon=True
+                                )
                                 ai_thread.start()
 
                         elif action == "skip_anim":

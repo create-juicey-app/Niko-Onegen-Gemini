@@ -122,9 +122,37 @@ class OptionsMenuMixin:
             "values": model_values,
             "current_index": 0
         })
+        y_offset += widget_height + spacing
+
+        # 6. Screen Capture Mode (Choice Selector)
+        capture_options = config.SCREEN_CAPTURE_OPTIONS
+        capture_values = config.SCREEN_CAPTURE_VALUES
+        self.options_widgets.append({
+            "key": "screen_capture_mode",
+            "label": "Able to See Screen:",
+            "type": "choice",
+            "rect": pygame.Rect(x_margin + label_width, y_offset, widget_width, widget_height),
+            "options": capture_options,
+            "values": capture_values,
+            "current_index": 0
+        })
+        y_offset += widget_height + spacing
+
+        # 7. Monitor Selection (Choice Selector) - Only if screen capture is enabled
+        monitor_options = ["Primary Monitor", "All Monitors"]
+        monitor_values = [config.MONITOR_PRIMARY, config.MONITOR_ALL]
+        self.options_widgets.append({
+            "key": "monitor_selection",
+            "label": "Monitor to Capture:",
+            "type": "choice",
+            "rect": pygame.Rect(x_margin + label_width, y_offset, widget_width, widget_height),
+            "options": monitor_options,
+            "values": monitor_values,
+            "current_index": 0
+        })
         y_offset += widget_height + spacing + 20 # Extra space before buttons
 
-        # 6. Save Button
+        # 8. Save Button
         button_width = 100
         button_height = 40
         save_x = self.window_width // 2 - button_width - 10
@@ -136,7 +164,7 @@ class OptionsMenuMixin:
             "action": "save"
         })
 
-        # 7. Cancel Button
+        # 9. Cancel Button
         cancel_x = self.window_width // 2 + 10
         self.options_widgets.append({
             "key": "cancel_button",

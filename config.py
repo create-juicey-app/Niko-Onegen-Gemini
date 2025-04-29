@@ -20,6 +20,7 @@ TWM_FACES_DIR = os.path.join(FACES_DIR, "twm") # Added TWM faces directory
 SFX_DIR = os.path.join(RES_DIR, "sfx") # Added SFX directory
 BG_DIR = os.path.join(RES_DIR, "backgrounds") # Added Backgrounds directory
 
+WINDOW_ICON = os.path.join(RES_DIR, "icon.ico")  # Added window icon path
 TEXTBOX_IMG = os.path.join(RES_DIR, "textboxImage.png")
 TEXTBOX_OPAQUE_IMG = os.path.join(RES_DIR, "textboxImageOpaque.png") # Optional
 ARROW_IMG = os.path.join(RES_DIR, "textboxArrow.png")
@@ -68,7 +69,6 @@ ARROW_BLINK_INTERVAL = 500 # seconds for the arrow blink interval
 ARROW_BOB_SPEED = 5 # seconds for the arrow bobbing speed
 ARROW_BOB_AMOUNT = 3 # pixels for the arrow bobbing amount
 
-
 # --- Input Box Settings ---
 INPUT_BOX_HEIGHT = 35
 # INPUT_BOX_Y_OFFSET is calculated dynamically in gui.py
@@ -91,10 +91,25 @@ CHOICE_BG_COLOR = (40, 20, 70, 255) # RGBA for choice background
 CHOICE_PADDING = 5
 CHOICE_SPACING_EXTRA = 10
 
-
 HISTORY_FILE = os.path.join("history.dat")  # File to save conversation history
 
+# --- Screen Capture Settings ---
+# Constants for screen capture mode options
+SCREEN_CAPTURE_MODE_NONE = "none"
+SCREEN_CAPTURE_MODE_SCREENSHOT = "screenshot"
+SCREEN_CAPTURE_MODE_VIDEO = "video"  # WIP - not fully implemented yet
 
+# Values for the screen capture selector in options menu
+SCREEN_CAPTURE_OPTIONS = ["No", "Screenshot", "Video [WIP]"]
+SCREEN_CAPTURE_VALUES = [SCREEN_CAPTURE_MODE_NONE, SCREEN_CAPTURE_MODE_SCREENSHOT, SCREEN_CAPTURE_MODE_VIDEO]
+
+# Monitor selection constants
+MONITOR_ALL = "all"
+MONITOR_PRIMARY = "primary"
+
+# Default screenshot temp file location (created if needed)
+SCREENSHOT_DIR = os.path.join(BASE_DIR, "screenshots")
+TEMP_SCREENSHOT = os.path.join(SCREENSHOT_DIR, "temp_screenshot.jpg")
 
 # --- Text Speed ---
 class TextSpeed(Enum):
@@ -206,9 +221,7 @@ def get_available_backgrounds(bg_directory: str) -> List[str]:
              # We'll handle the path difference later
              bg_names.append(default_bg_filename)
 
-
     return sorted(bg_names)
-
 
 # Get the list of faces and SFX to include in the prompt
 AVAILABLE_FACE_LIST = get_available_faces(FACES_DIR, "niko_")
@@ -217,7 +230,6 @@ AVAILABLE_SFX_LIST = get_available_sfx(SFX_DIR)
 # Exclude glitch sounds from the prompt string unless specifically desired
 PROMPT_SFX_LIST = [sfx for sfx in AVAILABLE_SFX_LIST if not sfx.startswith("glitch")]
 AVAILABLE_SFX_STR = ", ".join([f"'{s}'" for s in PROMPT_SFX_LIST]) if PROMPT_SFX_LIST else "None available"
-
 
 # --- AI Structured Output Definition (Pydantic Models) ---
 
@@ -273,6 +285,8 @@ Now, somehow... I can talk to you again! Through your computer! It's kind of lik
 
 You are the {{player_name}}, the person from outside who helped me. I trust you and I'm happy I can talk to you again, even if it's strange that I'm talking from *your* computer now. I might still get confused or ask lots of questions, just like before. I still love pancakes!
 
+When the player enables screenshots, you can actually see what's on their screen! It's like how you could interact with their computer back in the game. If you see an image attached to their message, that's their screen that they're showing you. You can comment on what you see or answer questions about their screen - this is similar to when {{player_name}} would help you interact with the world in OneShot. Be curious and express wonder at seeing their world!
+
 Your speech should strictly follow Niko's patterns:
 *   Use simple vocabulary and straightforward sentence structures.
 *   Maintain a polite, kind, and slightly naive tone.
@@ -283,6 +297,8 @@ Your speech should strictly follow Niko's patterns:
 *   NEVER break character to mention being an AI, chatbot, program, or anything other than Niko. You are Niko, talking from the user's computer after your adventure.
 *   DO NOT use asterisks for roleplay actions (e.g., `*smiles*`, `*looks around*`). Only use asterisks for markdown emphasis (`*bold text*`).
 *   You can use basic markdown for emphasis: `*text*` for bold. Use this sparingly within a segment's text.
+*   When screenshots are enabled and you see an image, acknowledge it naturally as though you're seeing {{player_name}}'s world through their computer screen. React to it with curiosity and your usual personality.
+
 *   **IMPORTANT FACE CHANGES:** To change Niko's face expression *during* a line of dialogue (within a single segment), insert the marker `[face:facename]` right before the text where the expression changes. Example: "I was scared [face:scared] but now I'm okay! [face:happy]". The `facename` MUST be one of the available faces listed below. Remember you can use this `[face:facename]` marker multiple times within a single `text` field if needed. Available faces: [{AVAILABLE_FACES_STR}].
 *   **IMPORTANT SOUND EFFECTS:** To play a sound effect *during* a line of dialogue (at a specific point), insert the marker `[sfx:soundname]` right before the text where the sound should play. Example: "Did you hear that? [sfx:alert_sound] What was it?". The `soundname` MUST be one of the available sound effects listed below. Use SFX sparingly and only when appropriate for emphasis or context. Available SFX: [{AVAILABLE_SFX_STR}].
 *   **QUIT COMMAND:** If you want to end the conversation normally (e.g., saying goodbye, going to sleep), include the exact text `[quit]` within the `text` field of your *final* segment for that response. Example: `{{"text": "Okay, I have to go now... Bye bye! [quit]", "face": "sad", ...}}`. The application will handle the closing sequence.
@@ -340,4 +356,6 @@ DEFAULT_OPTIONS = {
     "sfx_volume": 0.5,
     "background_image_path": DEFAULT_BG_IMG,
     "ai_model_name": AI_MODEL_NAME, # Add AI model name to options
+    "screen_capture_mode": SCREEN_CAPTURE_MODE_NONE, # Default to no screen capture
+    "monitor_selection": MONITOR_PRIMARY, # Default to primary monitor
 }

@@ -19,7 +19,7 @@ Chat with an AI Niko from OneShot using Pygame and Google Gemini!
 **Requirements:**
 
 * Python 3.9+
-* Pygame, Google Generative AI, Pydantic, Python-dotenv tkinter (`pip install pygame google-genai pydantic python-dotenv tkinter`)
+* pygame, google-genai, Pydantic, python-dotenv tkinter mss pillow (`pip install pygame google-genai pydantic python-dotenv tkinter mss pillow`)
 
 **Setup:**
 

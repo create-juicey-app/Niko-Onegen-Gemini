@@ -12,7 +12,7 @@ import zlib  # Added for compression
 
 import config
 from config import NikoResponse, AIResponse
-from typing import List
+from typing import List, Optional
 
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 1  # seconds
@@ -97,10 +97,38 @@ class NikoAI:
         cleaned = re.sub(r'\s+', ' ', cleaned)
         return cleaned
 
-    def generate_response(self, user_input: str, formatted_prompt: str) -> List[NikoResponse] | None:
+    def generate_response(self, user_input: str, formatted_prompt: str, screenshot_path: Optional[str] = None) -> List[NikoResponse] | None:
         current_turn = {'role': 'user', 'parts': [user_input]}
+        parts = []
+        
+        # Create the content parts for the API request
+        if screenshot_path and os.path.exists(screenshot_path):
+            try:
+                # Add image content if screenshot was taken
+                with open(screenshot_path, 'rb') as f:
+                    image_bytes = f.read()
+                
+                # Save the screenshot path in history
+                current_turn['screenshot'] = screenshot_path
+                
+                # Add text content first, then image
+                parts.append(types.Part.from_text(text=user_input))
+                parts.append(types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'))
+                print(f"Including screenshot from {screenshot_path} in API request")
+            except Exception as e:
+                print(f"Error reading screenshot file: {e}")
+                # If image fails, just use text
+                parts.append(types.Part.from_text(text=user_input))
+        else:
+            # Standard text-only content
+            parts.append(types.Part.from_text(text=user_input))
+
+        # Create API content with parts
+        user_content = types.Content(role='user', parts=parts)
+        
+        # Build full history for API
         full_history_for_api = self._format_history_for_api()
-        full_history_for_api.append(types.Content(role='user', parts=[types.Part.from_text(text=user_input)]))
+        full_history_for_api.append(user_content)
 
         try:
             request_config = GenerateContentConfig(
@@ -113,6 +141,7 @@ class NikoAI:
             print("\n--- Sending Request to AI ---")
             print(f"Model: {self.model_name}")
             print(f"User Input: {user_input}")
+            print(f"With Screenshot: {'Yes' if screenshot_path and os.path.exists(screenshot_path) else 'No'}")
             print("System Instruction (Prompt):")
             print(formatted_prompt)
             print("Conversation History Sent:")
