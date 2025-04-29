@@ -141,7 +141,8 @@ class InputMixin:
             prev_height = self.input_rect.height
             needs_redraw = False # Flag to indicate if text/cursor changed visually
 
-            if event.key == pygame.K_RETURN:
+            # Check for both main Enter and Numpad Enter
+            if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
                 # Don't submit if input is empty (optional)
                 # if not self.user_input_text.strip():
                 #     self.play_sound("menu_buzzer") # Or some other feedback

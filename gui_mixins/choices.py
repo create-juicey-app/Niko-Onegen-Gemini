@@ -106,7 +106,8 @@ class ChoicesMixin:
             elif event.key == pygame.K_DOWN:
                 self.selected_choice_index = (self.selected_choice_index + 1) % num_options
                 action_taken = True
-            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+            # Check for main Enter, Numpad Enter, or Space
+            elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE or event.key == pygame.K_KP_ENTER:
                 self.play_confirm_sound() # Play confirmation sound
                 chosen_index = self.selected_choice_index
                 # Action: choice_made, Value: the chosen index

@@ -567,7 +567,7 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
         gui.choice_options = menu_items
         gui.selected_choice_index = selected_index
         gui.is_choice_active = True
-        gui.draw_multiple_choice()
+        gui.draw_multiple_choice(gui.screen) # Pass the surface here
 
         pygame.display.flip()
 
@@ -713,7 +713,7 @@ def main():
                  ai_thread = None
 
         for event in pygame.event.get():
-            if gui.is_options_menu_active: continue
+            if gui.is_options_menu_active: continue # Skip events if options menu is handling them
 
             result = gui.handle_event(event)
 

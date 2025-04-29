@@ -155,75 +155,65 @@ class EventsMixin:
                 return ("dragging", (new_x, new_y)) # Consume the event
 
         # --- Consume mouse events if dragging started outside interactive elements ---
-        # This prevents clicks/releases used for dragging from triggering other actions
         if getattr(self, 'dragging', False) and event.type in [pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION]:
-             # We already handled the relevant dragging actions above
-             # Return None to indicate the event was consumed by the dragging logic
              return None
 
 
         # 6. Context-Specific Input Handling (Choices, Text Input, Dialogue)
-        # Delegate to specific handlers based on the current GUI state
+        # Process these modes exclusively. If an event is handled (even returning None),
+        # prevent it from falling through to the next mode check or dialogue handling.
 
         # --- Choice Mode ---
         if getattr(self, 'is_choice_active', False):
             # Ensure the choice event handler method exists
             if hasattr(self, 'handle_choice_event'):
-                choice_result = self.handle_choice_event(event)
-                if choice_result:
-                    return choice_result # Return result from choice handler
+                # Call the handler and return its result immediately.
+                # This consumes the event within choice mode.
+                return self.handle_choice_event(event)
             else:
                 print("Warning: is_choice_active is True, but handle_choice_event method missing.")
-            # If choice handler didn't consume the event, fall through (e.g., for QUIT)
-            # However, usually choice mode should consume most relevant inputs.
+                return None # Consume event anyway if state is inconsistent
 
         # --- Input Mode ---
-        elif getattr(self, 'is_input_active', False):
+        if getattr(self, 'is_input_active', False):
             # Ensure the input event handler method exists
             if hasattr(self, 'handle_input_event'):
-                input_result = self.handle_input_event(event)
-                if input_result:
-                    return input_result # Return result from input handler
+                # Call the handler and return its result immediately.
+                # This consumes the event within input mode.
+                return self.handle_input_event(event)
             else:
                 print("Warning: is_input_active is True, but handle_input_event method missing.")
-            # Let unhandled events fall through (e.g., QUIT, dragging started outside input box)
+                return None # Consume event anyway if state is inconsistent
 
-        # --- Normal Dialogue Mode ---
-        else:
-            # Handle advance/skip actions for dialogue
-            if event.type == pygame.KEYDOWN:
-                # Check for Space or Enter keys
-                if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
-                    # Check current dialogue state to determine action
-                    if getattr(self, 'is_paused', False):
-                        # Action: skip_pause, Value: None
-                        # State change (unpause) happens in the main loop based on this action
-                        return ("skip_pause", None)
-                    elif getattr(self, 'is_animating', False):
-                        # Action: skip_anim, Value: None
-                        # State change (finish animation) happens in the main loop
-                        return ("skip_anim", None)
-                    elif getattr(self, 'draw_arrow', False):
-                        # Action: advance, Value: None
-                        # State change (request next dialogue) happens in the main loop
-                        return ("advance", None)
+        # --- Normal Dialogue Mode (Only if not in Choice or Input mode) ---
+        # Handle advance/skip actions for dialogue
+        if event.type == pygame.KEYDOWN:
+            # Check for Space or Enter keys
+            if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                # Check current dialogue state to determine action
+                if getattr(self, 'is_paused', False):
+                    return ("skip_pause", None)
+                elif getattr(self, 'is_animating', False):
+                    return ("skip_anim", None)
+                elif getattr(self, 'draw_arrow', False):
+                    return ("advance", None)
 
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                 if event.button == 1: # Left click
-                    mouse_pos = event.pos
-                    # Check if click is within the textbox area
-                    if hasattr(self, 'textbox_img'):
-                        textbox_clickable_rect = self.textbox_img.get_rect(topleft=(self.textbox_x, self.textbox_y))
-                        if textbox_clickable_rect.collidepoint(mouse_pos):
-                            # Same logic as keydown for skipping/advancing
-                            if getattr(self, 'is_paused', False):
-                                return ("skip_pause", None)
-                            elif getattr(self, 'is_animating', False):
-                                return ("skip_anim", None)
-                            elif getattr(self, 'draw_arrow', False):
-                                return ("advance", None)
-                            # Consume the click on the textbox even if no action is taken
-                            return None
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+             if event.button == 1: # Left click
+                mouse_pos = event.pos
+                # Check if click is within the textbox area
+                if hasattr(self, 'textbox_img'):
+                    textbox_clickable_rect = self.textbox_img.get_rect(topleft=(self.textbox_x, self.textbox_y))
+                    if textbox_clickable_rect.collidepoint(mouse_pos):
+                        # Same logic as keydown for skipping/advancing
+                        if getattr(self, 'is_paused', False):
+                            return ("skip_pause", None)
+                        elif getattr(self, 'is_animating', False):
+                            return ("skip_anim", None)
+                        elif getattr(self, 'draw_arrow', False):
+                            return ("advance", None)
+                        # Consume the click on the textbox even if no action is taken
+                        return None
 
 
         # 7. Default: No specific action taken for this event in this context

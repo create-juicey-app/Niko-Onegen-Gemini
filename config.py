@@ -83,10 +83,10 @@ CURSOR_BLINK_INTERVAL = 0.5 # seconds for cursor blink interval
 
 
 CHOICE_TEXT_COLOR = (255, 255, 255, 255) # RGBA for choice text
-CHOICE_HIGHLIGHT_COLOR = (255, 255, 0, 255) # RGBA for highlighted choice text
+CHOICE_HIGHLIGHT_COLOR = (68, 36, 158, 255) # RGBA for highlighted choice text
 CHOICE_BG_COLOR = (50, 50, 50, 255) # RGBA for choice background
 CHOICE_PADDING = 5
-CHOICE_SPACING_EXTRA = 5 # Extra spacing between choices
+CHOICE_SPACING_EXTRA = 10
 
 
 # --- Text Speed ---

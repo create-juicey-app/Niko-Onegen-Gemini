@@ -457,6 +457,10 @@ class OptionsMenuMixin:
         # --- Standard Options Menu Event Handling (if pop-up is not active) ---
         focused_widget = self.options_widgets[self.focused_widget_index]
         max_scroll = max(0, self.total_options_height - self.visible_options_height)
+        num_widgets = len(self.options_widgets)
+        # Assuming Save is second-to-last and Cancel is last
+        save_button_index = num_widgets - 2
+        cancel_button_index = num_widgets - 1
 
         # --- Scrolling Input ---
         scrolled = False
@@ -480,17 +484,31 @@ class OptionsMenuMixin:
 
         # --- Keyboard Navigation (Adjust for Scroll) ---
         if event.type == pygame.KEYDOWN:
+            # --- Specific Left/Right for Save/Cancel Buttons ---
+            if event.key == pygame.K_LEFT:
+                if self.focused_widget_index == cancel_button_index:
+                    self._update_focus_and_scroll(save_button_index)
+                    return None # Consume event
+            elif event.key == pygame.K_RIGHT:
+                if self.focused_widget_index == save_button_index:
+                    self._update_focus_and_scroll(cancel_button_index)
+                    return None # Consume event
+            # --- End Specific Button Navigation ---
+
+            # --- General Up/Down/Tab/Escape ---
             if event.key == pygame.K_UP:
-                new_index = (self.focused_widget_index - 1) % len(self.options_widgets)
+                new_index = (self.focused_widget_index - 1) % num_widgets
                 self._update_focus_and_scroll(new_index) # Update focus and ensure visibility
             elif event.key == pygame.K_DOWN or event.key == pygame.K_TAB:
-                new_index = (self.focused_widget_index + 1) % len(self.options_widgets)
+                new_index = (self.focused_widget_index + 1) % num_widgets
                 self._update_focus_and_scroll(new_index) # Update focus and ensure visibility
             elif event.key == pygame.K_ESCAPE:
                 action = "cancel" # Escape cancels the options menu
                 self.play_sound("menu_cancel")
 
             # --- Widget Interaction (Keyboard) ---
+            # NOTE: The specific Left/Right button navigation above should prevent
+            # the choice widget's Left/Right handling from triggering when a button is focused.
             elif focused_widget["type"] == "choice":
                 # Left/Right keys still cycle through options directly
                 num_choices = len(focused_widget["options"])
@@ -505,8 +523,8 @@ class OptionsMenuMixin:
                         self.temp_options[focused_widget["key"]] = focused_widget["values"][focused_widget["current_index"]]
                         self.play_sound("menu_cursor")
                         self._preview_option_change(focused_widget["key"], self.temp_options[focused_widget["key"]])
-                    # Enter/Space now opens the pop-up
-                    elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                    # Enter/Space/Numpad Enter now opens the pop-up
+                    elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE or event.key == pygame.K_KP_ENTER:
                         self.is_options_choice_popup_active = True
                         self.editing_choice_widget_index = self.focused_widget_index
                         self.choice_options = focused_widget["options"] # Use options from the widget
@@ -544,7 +562,7 @@ class OptionsMenuMixin:
                 focused_widget["cursor_timer"] = 0.0
 
             elif focused_widget["type"] == "button":
-                if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE:
+                if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE or event.key == pygame.K_KP_ENTER:
                     action = focused_widget["action"] # "save" or "cancel"
                     self.play_confirm_sound()
 
