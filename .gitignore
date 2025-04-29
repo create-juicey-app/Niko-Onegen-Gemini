@@ -176,3 +176,6 @@ cython_debug/
 options.json
 history.dat 
 /saved_histories
+
+configalt.py
+# alternative config file that only i should be able to use for debugging purposes
