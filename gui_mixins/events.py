@@ -222,6 +222,18 @@ class EventsMixin:
                     return ("skip_anim", None)
                 elif getattr(self, 'draw_arrow', False):
                     return ("advance", None)
+            elif event.key == pygame.K_ESCAPE:
+                # If input is currently hidden, Esc brings it back
+                if getattr(self, 'is_input_hidden', False):
+                    self.is_input_hidden = False
+                    self.is_input_active = True # Re-enable input
+                    self.input_cursor_visible = True # Show cursor
+                    self.input_cursor_timer = 0.0 # Reset blink
+                    self.play_confirm_sound() # Optional sound
+                    return ("input_enabled", None) # Signal input was re-enabled
+                # Otherwise, Esc opens the main menu if nothing else is active
+                elif not getattr(self, 'is_menu_active', False) and not getattr(self, 'is_options_menu_active', False) and not getattr(self, 'is_history_active', False):
+                    return ("toggle_menu", None)
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
              if event.button == 1: # Left click
@@ -240,6 +252,67 @@ class EventsMixin:
                         # Consume the click on the textbox even if no action is taken
                         return None
 
+        # --- Input Mode Active ---
+        elif getattr(self, 'is_input_active', False):
+            input_result = self.handle_input_event(event)
+            if input_result:
+                action, data = input_result
+                if action == "submit_input":
+                    return ("submit_input", data)
+                elif action == "input_escape":
+                    # User pressed Escape while input was active
+                    self.is_input_active = False
+                    self.is_input_hidden = True # Explicitly hide input
+                    self.input_cursor_visible = False # Hide cursor immediately
+                    self.play_sound("menu_cancel") # Optional sound
+                    return ("input_disabled", None) # Signal input was disabled
+
+        # --- Choice Mode Active ---
+        elif getattr(self, 'is_choice_active', False):
+            if hasattr(self, 'handle_choice_event'):
+                return self.handle_choice_event(event)
+
+        # --- Default / Dialogue Mode ---
+        else:
+            # Handle non-input/choice/menu key presses
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_RETURN or event.key == pygame.K_SPACE or event.key == pygame.K_KP_ENTER:
+                    # Advance dialogue or skip animation/pause
+                    if getattr(self, 'is_animating', False):
+                        return ("skip_anim", None)
+                    elif getattr(self, 'is_paused', False):
+                        return ("skip_pause", None)
+                    elif getattr(self, 'draw_arrow', False): # Only advance if arrow is shown
+                        return ("advance", None)
+                elif event.key == pygame.K_ESCAPE:
+                    # If input is currently hidden, Esc brings it back
+                    if getattr(self, 'is_input_hidden', False):
+                        self.is_input_hidden = False
+                        self.is_input_active = True # Re-enable input
+                        self.input_cursor_visible = True # Show cursor
+                        self.input_cursor_timer = 0.0 # Reset blink
+                        self.play_confirm_sound() # Optional sound
+                        return ("input_enabled", None) # Signal input was re-enabled
+                    # Otherwise, Esc opens the main menu if nothing else is active
+                    elif not getattr(self, 'is_menu_active', False) and not getattr(self, 'is_options_menu_active', False) and not getattr(self, 'is_history_active', False):
+                        return ("toggle_menu", None)
+
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1: # Left click
+                    mouse_pos = event.pos
+                    # Check if click is within the textbox area
+                    if hasattr(self, 'textbox_img'):
+                        textbox_clickable_rect = self.textbox_img.get_rect(topleft=(self.textbox_x, self.textbox_y))
+                        if textbox_clickable_rect.collidepoint(mouse_pos):
+                            # Same logic as keydown for skipping/advancing
+                            if getattr(self, 'is_paused', False):
+                                return ("skip_pause", None)
+                            elif getattr(self, 'is_animating', False):
+                                return ("skip_anim", None)
+                            elif getattr(self, 'draw_arrow', False):
+                                return ("advance", None)
+                            # Consume the click on the textbox even if no action is taken
+                            return None
 
         # 6. Default: No specific action taken for this event in this context
         return None

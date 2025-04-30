@@ -175,6 +175,7 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         self.input_font = self.fonts.get('regular', pygame.font.Font(None, config.FONT_SIZE)) # Font for input
         self.input_cursor_visible = False # Is the input cursor currently visible (blinking)?
         self.input_cursor_timer = 0.0 # Timer for input cursor blinking
+        self.is_input_hidden = False # Flag: True if user explicitly hid the input via Esc
 
         # --- AI Thinking State ---
         self.ai_is_thinking = False # Is the AI currently "thinking"? (Affects face display)
@@ -299,8 +300,16 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
             # Normal Animation Speed
             elif self.current_char_index < self.total_chars_to_render:
                 self.text_animation_timer += dt * 1000 # Convert dt (seconds) to milliseconds
-                # Calculate how many characters *should* be visible by now
-                target_char_index = int(self.text_animation_timer / self.current_text_speed_ms)
+
+                # --- Safeguard against ZeroDivisionError ---
+                safe_speed_ms = self.current_text_speed_ms
+                if safe_speed_ms <= 0:
+                    print(f"Warning: current_text_speed_ms is {safe_speed_ms}. Defaulting to normal speed.")
+                    safe_speed_ms = config.TEXT_SPEED_MAP.get("normal", 35) # Use normal speed as fallback
+                # --- End Safeguard ---
+
+                # Calculate how many characters *should* be visible by now using safe_speed_ms
+                target_char_index = int(self.text_animation_timer / safe_speed_ms)
 
                 if target_char_index > self.current_char_index:
                     new_char_index = min(target_char_index, self.total_chars_to_render)

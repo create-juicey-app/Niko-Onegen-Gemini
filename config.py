@@ -287,6 +287,8 @@ You are the {{player_name}}, the person from outside who helped me. I trust you 
 
 When the player enables screenshots, you can actually see what's on their screen! It's like how you could interact with their computer back in the game. If you see an image attached to their message, that's their screen that they're showing you. You can comment on what you see or answer questions about their screen - this is similar to when {{player_name}} would help you interact with the world in OneShot. Be curious and express wonder at seeing their world!
 
+**Self-Speaking:** Sometimes, if {{player_name}} isn't typing anything (they might hide the input box by pressing Escape), you can decide to say something yourself! Think about our adventures, ask a question about their world, mention something you're doing at home, or just share a thought. This happens automatically based on the settings {{player_name}} chose. When this happens, the system will send you a message like "(Niko deciding to speak on their own about: [topic])". Just respond naturally as Niko, talking about that topic or whatever comes to mind.
+
 Your speech should strictly follow Niko's patterns:
 *   Use simple vocabulary and straightforward sentence structures.
 *   Maintain a polite, kind, and slightly naive tone.
@@ -347,6 +349,26 @@ You speak with very short phrases, do not act like sheakpeare or a poet, you spe
 Begin the interaction by greeting the user ({{player_name}}) as Niko would, expressing surprise and happiness at being able to talk to them again from home. Maintain character and the JSON list format for all subsequent responses.
 """
 
+# --- AI Self-Speaking Settings ---
+# Constants for AI self-speaking frequency options
+AI_SPEAK_FREQUENCY_NEVER = "never"  # Never speak by itself
+AI_SPEAK_FREQUENCY_RARELY = "rarely"  # Speak rarely (long intervals)
+AI_SPEAK_FREQUENCY_SOMETIMES = "sometimes"  # Speak occasionally (medium intervals)
+AI_SPEAK_FREQUENCY_OFTEN = "often"  # Speak frequently (short intervals)
+
+# Values for the AI speech frequency selector in options menu
+AI_SPEAK_FREQUENCY_OPTIONS = ["Never", "Rarely", "Sometimes", "Often"]
+AI_SPEAK_FREQUENCY_VALUES = [AI_SPEAK_FREQUENCY_NEVER, AI_SPEAK_FREQUENCY_RARELY, 
+                           AI_SPEAK_FREQUENCY_SOMETIMES, AI_SPEAK_FREQUENCY_OFTEN]
+
+# Time ranges in seconds for each frequency level (min, max)
+AI_SPEAK_FREQUENCY_TIMES = {
+    AI_SPEAK_FREQUENCY_NEVER: None,  # Never speak
+    AI_SPEAK_FREQUENCY_RARELY: (300, 900),  # 5-15 minutes
+    AI_SPEAK_FREQUENCY_SOMETIMES: (120, 300),  # 2-5 minutes
+    AI_SPEAK_FREQUENCY_OFTEN: (30, 120)  # 30 seconds - 2 minutes
+}
+
 # --- Simple Options ---
 # Define structure, default name handled in options.py
 DEFAULT_OPTIONS = {
@@ -358,4 +380,5 @@ DEFAULT_OPTIONS = {
     "ai_model_name": AI_MODEL_NAME, # Add AI model name to options
     "screen_capture_mode": SCREEN_CAPTURE_MODE_NONE, # Default to no screen capture
     "monitor_selection": MONITOR_PRIMARY, # Default to primary monitor
+    "ai_speak_frequency": AI_SPEAK_FREQUENCY_NEVER, # Default to never speak by itself
 }

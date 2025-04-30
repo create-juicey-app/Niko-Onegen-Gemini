@@ -150,9 +150,23 @@ class OptionsMenuMixin:
             "values": monitor_values,
             "current_index": 0
         })
+        y_offset += widget_height + spacing
+
+        # 8. AI Speech Frequency (Choice Selector)
+        speech_options = config.AI_SPEAK_FREQUENCY_OPTIONS
+        speech_values = config.AI_SPEAK_FREQUENCY_VALUES
+        self.options_widgets.append({
+            "key": "ai_speak_frequency",
+            "label": "Niko speaks by itself:",
+            "type": "choice",
+            "rect": pygame.Rect(x_margin + label_width, y_offset, widget_width, widget_height),
+            "options": speech_options,
+            "values": speech_values,
+            "current_index": 0
+        })
         y_offset += widget_height + spacing + 20 # Extra space before buttons
 
-        # 8. Save Button
+        # 9. Save Button
         button_width = 100
         button_height = 40
         save_x = self.window_width // 2 - button_width - 10
@@ -164,7 +178,7 @@ class OptionsMenuMixin:
             "action": "save"
         })
 
-        # 9. Cancel Button
+        # 10. Cancel Button
         cancel_x = self.window_width // 2 + 10
         self.options_widgets.append({
             "key": "cancel_button",

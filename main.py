@@ -17,6 +17,7 @@ import re
 import textwrap
 from pydantic import ValidationError
 import random
+import time  # Added for timing self-speaking feature
 import mss  # For screen capture
 import mss.tools
 from PIL import Image  # For image processing
@@ -32,6 +33,44 @@ last_failed_is_initial: bool = False
 waiting_for_retry_choice: bool = False
 last_failed_screenshot: str | None = None  # Add screenshot path to retry state
 # --- End added state ---
+
+# --- Add state for self-speaking AI ---
+ai_next_self_speak_time = float('inf')  # When Niko should next speak by itself
+ai_self_speak_in_progress = False  # Flag to track if self-speaking is currently happening
+# --- End added state ---
+
+def set_next_self_speak_time(frequency: str) -> float:
+    """Calculate the next time Niko should speak based on frequency setting."""
+    if frequency == config.AI_SPEAK_FREQUENCY_NEVER:
+        return float('inf')  # Never speak
+    
+    time_range = config.AI_SPEAK_FREQUENCY_TIMES.get(frequency)
+    if not time_range:
+        return float('inf')
+        
+    min_time, max_time = time_range
+    delay = random.uniform(min_time, max_time)
+    return time.time() + delay
+
+def generate_random_topic() -> str:
+    """Generate a random topic for Niko to talk about."""
+    topics = [
+        "I wonder what Mama is cooking today...",
+        "Do you think the stars look the same from your world?",
+        "I miss Alula and Calamus sometimes.",
+        "I had a dream about pancakes last night!",
+        "Do you have wheat fields in your world too?",
+        "I was thinking about our journey together.",
+        "The lightbulb... I mean, sun... was so bright.",
+        "I haven't seen any robots lately.",
+        "I wonder how everyone from the City is doing now.",
+        "Do you remember when we first met?",
+        "I'm glad I got to go home after our adventure.",
+        "I've been helping Mama with chores.",
+        "Sometimes I still think about our adventure.",
+        "I saw something that reminded me of you today!"
+    ]
+    return random.choice(topics)
 
 def capture_screenshot(app_options: Dict[str, Any]) -> str | None:
     """Captures a screenshot based on application options and returns the path if successful."""
@@ -473,6 +512,7 @@ def main():
     # --- Add access to global retry state variables ---
     global last_failed_user_input, last_failed_prompt, last_failed_is_initial, waiting_for_retry_choice, last_failed_screenshot
     # --- End access ---
+    global ai_next_self_speak_time, ai_self_speak_in_progress
     app_options = options.load_options()
     # Load previous exit status, default to abrupt if not found
     previous_exit_status = app_options.get(config.EXIT_STATUS_KEY, config.EXIT_STATUS_ABRUPT)
@@ -546,6 +586,11 @@ def main():
     except ValueError as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
     except Exception as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
 
+    # Initialize self-speak timer if feature is enabled
+    speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
+    if speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER:
+        ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
+
     # --- State Variables ---
     ai_is_thinking = False
     dialogue_queue = deque()
@@ -563,8 +608,7 @@ def main():
         """Queues dialogue segments received from the AI and displays the first. Handles errors and quit commands."""
         # Use nonlocal to modify flags in the outer scope (main)
         nonlocal ai_is_thinking, force_quit_pending, quit_pending
-        global exit_reason
-        global waiting_for_retry_choice
+        global exit_reason, waiting_for_retry_choice, ai_self_speak_in_progress
 
         # Reset state for this response
         gui.ai_is_thinking = False
@@ -573,6 +617,9 @@ def main():
         force_quit_pending = False # Reset pending flags for this response
         quit_pending = False
         error_occurred = False
+        
+        # Reset self-speak flag when response is processed
+        ai_self_speak_in_progress = False
 
         if response_segments:
             num_segments = len(response_segments)
@@ -677,6 +724,7 @@ def main():
     # --- Main Loop ---
     while gui.running:
         dt = gui.clock.tick(60) / 1000.0
+        current_time = time.time()  # Get current time for self-speaking checks
 
         if gui.is_forced_quitting:
             for event in pygame.event.get():
@@ -685,6 +733,46 @@ def main():
             gui.update(dt)
             gui.render()
             continue
+
+        # Check if it's time for Niko to speak by itself
+        speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
+        # --- Modified Trigger Condition ---
+        # Only trigger if: not thinking, no dialogue queue, no retry pending,
+        # no menus active, no choices active, input is EXPLICITLY HIDDEN,
+        # not already self-speaking, timer expired, and frequency is not 'never'.
+        if (not ai_is_thinking and
+            not dialogue_queue and
+            not waiting_for_retry_choice and
+            not gui.is_menu_active and
+            not gui.is_options_menu_active and
+            not gui.is_choice_active and
+            not gui.is_input_active and # Ensure input field itself isn't active
+            gui.is_input_hidden and     # Check if input was explicitly hidden
+            not ai_self_speak_in_progress and
+            current_time >= ai_next_self_speak_time and
+            speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER):
+        # --- End Modified Trigger Condition ---
+
+            # Niko should speak now
+            print(f"Niko is speaking by itself (frequency: {speak_frequency}, input hidden)") # Updated log
+            ai_self_speak_in_progress = True
+            ai_is_thinking = True
+            gui.ai_is_thinking = True
+            gui.is_input_active = False
+            
+            # Choose a random topic for Niko to talk about
+            random_topic = generate_random_topic()
+            
+            # Start thread for AI to generate response about the random topic
+            ai_thread = threading.Thread(
+                target=ai_worker,
+                args=(niko_ai, formatted_initial_prompt, f"(Niko deciding to speak on their own about: {random_topic})"),
+                daemon=True
+            )
+            ai_thread.start()
+            
+            # Set next time to speak
+            ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
 
         if ai_is_thinking:
             try:
@@ -840,10 +928,14 @@ def main():
                                     gui.running = False
                                     quit_pending = False
                                     gui.is_input_active = False
-                                elif not gui.is_input_active:
+                                elif not gui.is_input_active and not gui.is_input_hidden: # Check if input is not active AND not hidden
                                     gui.is_input_active = True
                                     gui.draw_arrow = False
                                     gui.user_input_text = ""
+                                    # Cancel self-speak when user advances dialogue to input
+                                    # (This case might be less common now, but keep for safety)
+                                    ai_next_self_speak_time = float('inf')
+                                    print("[Self-Speak Timer] Timer cancelled (advanced to input).")
                             else:
                                 next_segment = dialogue_queue.popleft()
                                 gui.set_dialogue(next_segment)
@@ -867,6 +959,11 @@ def main():
                                 last_failed_prompt = formatted_initial_prompt
                                 last_failed_is_initial = False
                                 last_failed_screenshot = screenshot_path  # Store screenshot path for potential retry
+
+                                # Reset self-speak timer when user submits input
+                                speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
+                                if speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER:
+                                    ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
 
                                 ai_thread = threading.Thread(
                                     target=ai_worker,

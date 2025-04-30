@@ -82,12 +82,12 @@ def wrap_text(text: str, font: pygame.font.Font, max_width_pixels: int) -> tuple
         if cleaned_line:
             final_lines.append(cleaned_line)
 
-    accurate_plain_char_count = 0
+    get_visible_char_count = 0
     for line in final_lines:
          line_without_markers = _marker_regex_combined.sub('', line)
-         accurate_plain_char_count += len(line_without_markers)
+         get_visible_char_count += len(line_without_markers)
 
-    return final_lines, accurate_plain_char_count
+    return final_lines, get_visible_char_count
 
 
 def wrap_input_text(text: str, font: pygame.font.Font, max_width: int) -> tuple[list[str], list[int]]:
