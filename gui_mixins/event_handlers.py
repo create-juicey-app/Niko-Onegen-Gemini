@@ -4,6 +4,8 @@ import os
 import options # Import the options module for saving
 from .text_utils import wrap_input_text # Import the wrapping utility
 import time # For debug timestamp
+# Import SELECT_BACKGROUND_FROM_FILE
+from config import SELECT_BACKGROUND_FROM_FILE
 
 class EventHandlersMixin:
     """Mixin containing methods for handling events in specific UI states."""
@@ -181,9 +183,26 @@ class EventHandlersMixin:
                     chosen_index = choice_data
                     if 0 <= self.editing_choice_widget_index < len(self.options_widgets):
                         widget = self.options_widgets[self.editing_choice_widget_index]
+                        chosen_value = widget["values"][chosen_index]
+
+                        # --- Handle Background File Selection ---
+                        if widget["key"] == "background_image_path" and chosen_value == SELECT_BACKGROUND_FROM_FILE:
+                            self.is_options_choice_popup_active = False # Close popup first
+                            self.is_choice_active = False
+                            self.choice_options = []
+                            self._select_background_from_file(self.editing_choice_widget_index)
+                            self.editing_choice_widget_index = -1
+                            return None # File dialog handled it
+                        # --- End Handle Background ---
+
                         widget["current_index"] = chosen_index
-                        self.temp_options[widget["key"]] = widget["values"][chosen_index]
+                        self.temp_options[widget["key"]] = chosen_value
+                        # Update display value for background if not custom
+                        if widget["key"] == "background_image_path":
+                             widget["current_display_value"] = widget["options"][chosen_index]
+
                         self._preview_option_change(widget["key"], self.temp_options[widget["key"]])
+
                     self.is_options_choice_popup_active = False
                     self.is_choice_active = False
                     self.choice_options = []
@@ -250,24 +269,66 @@ class EventHandlersMixin:
             elif focused_widget["type"] == "choice":
                 num_choices = len(focused_widget["options"])
                 if num_choices > 0:
+                    current_index = focused_widget["current_index"]
+                    new_index = current_index
+                    value_changed = False
+
                     if event.key == pygame.K_LEFT:
-                        focused_widget["current_index"] = (focused_widget["current_index"] - 1) % num_choices
-                        self.temp_options[focused_widget["key"]] = focused_widget["values"][focused_widget["current_index"]]
-                        self.play_sound("menu_cursor")
-                        self._preview_option_change(focused_widget["key"], self.temp_options[focused_widget["key"]])
+                        new_index = (current_index - 1) % num_choices
+                        value_changed = True
                     elif event.key == pygame.K_RIGHT:
-                        focused_widget["current_index"] = (focused_widget["current_index"] + 1) % num_choices
-                        self.temp_options[focused_widget["key"]] = focused_widget["values"][focused_widget["current_index"]]
+                        new_index = (current_index + 1) % num_choices
+                        value_changed = True
+
+                    if value_changed:
+                        focused_widget["current_index"] = new_index
+                        chosen_value = focused_widget["values"][new_index]
+
+                        # --- Handle Background File Selection (Direct Left/Right) ---
+                        if focused_widget["key"] == "background_image_path":
+                            if chosen_value == SELECT_BACKGROUND_FROM_FILE:
+                                # Store placeholder, update display, but don't preview placeholder
+                                self.temp_options[focused_widget["key"]] = chosen_value
+                                focused_widget["current_display_value"] = focused_widget["options"][new_index]
+                            else:
+                                # Regular selection or custom path was already active
+                                self.temp_options[focused_widget["key"]] = chosen_value
+                                focused_widget["current_display_value"] = focused_widget["options"][new_index]
+                                self._preview_option_change(focused_widget["key"], chosen_value)
+                        else:
+                             # Normal option change
+                             self.temp_options[focused_widget["key"]] = chosen_value
+                             self._preview_option_change(focused_widget["key"], chosen_value)
+                        # --- End Handle Background ---
+
                         self.play_sound("menu_cursor")
-                        self._preview_option_change(focused_widget["key"], self.temp_options[focused_widget["key"]])
+
                     elif event.key == pygame.K_RETURN or event.key == pygame.K_SPACE or event.key == pygame.K_KP_ENTER:
-                        self.is_options_choice_popup_active = True
-                        self.editing_choice_widget_index = self.focused_widget_index
-                        self.choice_options = focused_widget["options"]
-                        self.selected_choice_index = focused_widget["current_index"]
-                        self.is_choice_active = True
-                        self.play_confirm_sound()
-                        return None
+                        # --- Handle Background File Selection (Enter/Space) ---
+                        chosen_value = focused_widget["values"][focused_widget["current_index"]]
+                        if focused_widget["key"] == "background_image_path" and chosen_value == SELECT_BACKGROUND_FROM_FILE:
+                            self._select_background_from_file(self.focused_widget_index)
+                            return None # File dialog handled it
+                        # --- End Handle Background ---
+                        else:
+                            # Open regular choice pop-up
+                            self.is_options_choice_popup_active = True
+                            self.editing_choice_widget_index = self.focused_widget_index
+                            self.choice_options = focused_widget["options"]
+                            # Ensure popup starts with the correct selection, especially for background
+                            if focused_widget["key"] == "background_image_path":
+                                # If a custom path is active, the popup should still show "Select..." selected
+                                current_saved_path = self.temp_options.get(focused_widget["key"])
+                                if current_saved_path not in focused_widget["values"]:
+                                    self.selected_choice_index = focused_widget["values"].index(SELECT_BACKGROUND_FROM_FILE)
+                                else:
+                                    self.selected_choice_index = focused_widget["current_index"]
+                            else:
+                                self.selected_choice_index = focused_widget["current_index"]
+
+                            self.is_choice_active = True
+                            self.play_confirm_sound()
+                            return None
 
             elif focused_widget["type"] == "input":
                 # --- DEBUG PRINT ---
@@ -333,12 +394,29 @@ class EventHandlersMixin:
                             action = focused_widget["action"]
                             self.play_confirm_sound()
                         elif focused_widget["type"] == "choice":
-                            self.is_options_choice_popup_active = True
-                            self.editing_choice_widget_index = i
-                            self.choice_options = focused_widget["options"]
-                            self.selected_choice_index = focused_widget["current_index"]
-                            self.is_choice_active = True
-                            self.play_confirm_sound()
+                             # --- Handle Background File Selection (Click) ---
+                             chosen_value = focused_widget["values"][focused_widget["current_index"]]
+                             if focused_widget["key"] == "background_image_path" and chosen_value == SELECT_BACKGROUND_FROM_FILE:
+                                 self._select_background_from_file(i)
+                                 return None # File dialog handled it
+                             # --- End Handle Background ---
+                             else:
+                                 # Open regular choice pop-up
+                                 self.is_options_choice_popup_active = True
+                                 self.editing_choice_widget_index = i
+                                 self.choice_options = focused_widget["options"]
+                                 # Ensure popup starts with the correct selection
+                                 if focused_widget["key"] == "background_image_path":
+                                     current_saved_path = self.temp_options.get(focused_widget["key"])
+                                     if current_saved_path not in focused_widget["values"]:
+                                         self.selected_choice_index = focused_widget["values"].index(SELECT_BACKGROUND_FROM_FILE)
+                                     else:
+                                         self.selected_choice_index = focused_widget["current_index"]
+                                 else:
+                                     self.selected_choice_index = focused_widget["current_index"]
+
+                                 self.is_choice_active = True
+                                 self.play_confirm_sound()
                         elif focused_widget["type"] == "input":
                              text_start_x = widget["rect"].left + 5
                              click_offset_x = mouse_pos[0] - text_start_x

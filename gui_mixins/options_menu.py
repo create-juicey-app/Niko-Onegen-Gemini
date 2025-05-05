@@ -2,6 +2,9 @@ import pygame
 import config
 import os # For background list
 import options # Import the options module for saving
+# Add tkinter import for file dialogs
+import tkinter as tk
+from tkinter import filedialog
 
 class OptionsMenuMixin:
     """Mixin class for handling the dedicated options menu screen state."""
@@ -34,6 +37,9 @@ class OptionsMenuMixin:
         # Pop-up choice state
         self.is_options_choice_popup_active = False
         self.editing_choice_widget_index = -1
+
+        # Tkinter root for file dialogs
+        self.tk_root = None
 
         # Define widget structure dynamically
         self._build_options_widgets()
@@ -91,22 +97,25 @@ class OptionsMenuMixin:
         y_offset += widget_height + spacing
 
         # 4. Background Image (Choice Selector)
-        bg_options = [os.path.basename(p) for p in config.get_available_backgrounds(config.BG_DIR)]
-        bg_values = [os.path.join(config.BG_DIR, name) for name in bg_options]
-        # Add default if not already listed? Ensure it's present.
+        bg_options_display = ["Select from file..."] + [os.path.basename(p) for p in config.get_available_backgrounds(config.BG_DIR)]
+        bg_values = [config.SELECT_BACKGROUND_FROM_FILE] + [os.path.join(config.BG_DIR, name) for name in bg_options_display[1:]] # Skip "Select..."
+
+        # Ensure default is present if it's not in BG_DIR
         default_bg_name = os.path.basename(config.DEFAULT_BG_IMG)
-        if default_bg_name not in bg_options:
-             bg_options.insert(0, default_bg_name)
-             bg_values.insert(0, config.DEFAULT_BG_IMG)
+        if config.DEFAULT_BG_IMG not in bg_values:
+             # Insert default after "Select..."
+             bg_options_display.insert(1, default_bg_name)
+             bg_values.insert(1, config.DEFAULT_BG_IMG)
 
         self.options_widgets.append({
             "key": "background_image_path",
             "label": "Background:",
             "type": "choice",
             "rect": pygame.Rect(x_margin + label_width, y_offset, widget_width, widget_height),
-            "options": bg_options,
-            "values": bg_values,
-            "current_index": 0
+            "options": bg_options_display, # Display names including "Select..."
+            "values": bg_values, # Actual values/paths + placeholder
+            "current_index": 0, # Will be updated in enter_options_menu
+            "current_display_value": "" # Store the actual path if custom
         })
         y_offset += widget_height + spacing
 
@@ -213,12 +222,27 @@ class OptionsMenuMixin:
                     widget["cursor_pos"] = len(widget["text"])
                 elif widget["type"] == "choice":
                     try:
-                        widget["current_index"] = widget["values"].index(value)
+                        # Handle background separately due to custom paths
+                        if key == "background_image_path":
+                            if value == config.SELECT_BACKGROUND_FROM_FILE: # Should not happen in saved options
+                                widget["current_index"] = 0
+                                widget["current_display_value"] = ""
+                            elif value in widget["values"]:
+                                widget["current_index"] = widget["values"].index(value)
+                                widget["current_display_value"] = widget["options"][widget["current_index"]]
+                            else:
+                                # Custom path saved, find "Select..." and store path
+                                widget["current_index"] = widget["values"].index(config.SELECT_BACKGROUND_FROM_FILE)
+                                widget["current_display_value"] = os.path.basename(value) # Show filename
+                        else:
+                             widget["current_index"] = widget["values"].index(value)
                     except ValueError:
                         # Handle case where saved value is no longer valid
                         print(f"Warning: Saved value '{value}' for option '{key}' not found in current choices. Resetting.")
                         widget["current_index"] = 0
                         self.temp_options[key] = widget["values"][0] # Update temp option
+                        if key == "background_image_path":
+                             widget["current_display_value"] = widget["options"][0]
 
         # Set TWM face/sfx for the options menu itself
         self.set_active_face_set("twm")
@@ -240,8 +264,16 @@ class OptionsMenuMixin:
         self.editing_choice_widget_index = -1
 
         original_bg_path = self.options.get("background_image_path") # Get original before potential save
+        saved_bg_path = self.temp_options.get("background_image_path")
 
         if save_changes:
+            # Ensure SELECT_BACKGROUND_FROM_FILE isn't saved
+            if saved_bg_path == config.SELECT_BACKGROUND_FROM_FILE:
+                 # This should only happen if the user selected "Select..." but cancelled the dialog
+                 # Revert to the original path before saving
+                 self.temp_options["background_image_path"] = original_bg_path
+                 print("Warning: 'Select from file...' was chosen but no file selected. Reverting background.")
+
             self.options.update(self.temp_options)
             options.save_options(self.options) # Use imported options module
             print("Options saved.")
@@ -249,23 +281,26 @@ class OptionsMenuMixin:
             self.set_sfx_volume(self.options["sfx_volume"])
             self.current_text_speed_ms = config.TEXT_SPEED_MAP.get(self.options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
             # Reload background if it changed
-            if self.options.get("background_image_path") != original_bg_path:
-                 self.bg_img_original = self.load_image(self.options["background_image_path"])
+            new_bg_path = self.options.get("background_image_path")
+            if new_bg_path != original_bg_path:
+                 self.bg_img_original = self.load_image(new_bg_path)
                  if self.bg_img_original:
                       self.bg_img = pygame.transform.smoothscale(self.bg_img_original, (self.window_width, self.window_height))
                  else: # Handle load failure
-                      self.bg_img = pygame.Surface((self.window_width, self.window_height)); self.bg_img.fill((50,50,50))
-            # Update AI model in the AI instance (requires access to niko_ai)
-            # This might need to be handled in main.py after this function returns,
-            # or niko_ai needs to be passed or made accessible here.
-            # For now, print a message.
-            print(f"AI Model changed to: {self.options.get('ai_model_name')}")
-            # Let main.py handle the actual AI instance update after the menu closes.
+                      print(f"Error loading saved background: {new_bg_path}. Reverting to default.")
+                      self.options["background_image_path"] = config.DEFAULT_BG_IMG # Correct the saved option
+                      options.save_options(self.options) # Save the correction
+                      self.bg_img_original = self.load_image(config.DEFAULT_BG_IMG)
+                      if self.bg_img_original:
+                           self.bg_img = pygame.transform.smoothscale(self.bg_img_original, (self.window_width, self.window_height))
+                      else:
+                           self.bg_img = pygame.Surface((self.window_width, self.window_height)); self.bg_img.fill((50,50,50))
 
         else:
             print("Options cancelled.")
             # Revert any previewed changes (e.g., background)
-            if self.temp_options.get("background_image_path") != original_bg_path:
+            # Check if the temp path is different AND not the placeholder
+            if saved_bg_path != original_bg_path and saved_bg_path != config.SELECT_BACKGROUND_FROM_FILE:
                  self.bg_img_original = self.load_image(original_bg_path)
                  if self.bg_img_original:
                       self.bg_img = pygame.transform.smoothscale(self.bg_img_original, (self.window_width, self.window_height))
@@ -274,9 +309,7 @@ class OptionsMenuMixin:
             # Revert volume preview if any was done
             self.set_sfx_volume(self.options["sfx_volume"])
 
-
         # Restore original face/sfx set (assuming it was Niko before entering options)
-        # TODO: Make this smarter - store the state before entering options
         self.set_active_face_set("niko")
         self.set_active_sfx("default")
 
@@ -287,13 +320,89 @@ class OptionsMenuMixin:
             # Play sound again with new volume for preview
             self.play_sound("menu_cursor")
         elif key == "background_image_path":
+            # Handle the placeholder value - don't try to load it
+            if value == config.SELECT_BACKGROUND_FROM_FILE:
+                return # Do nothing for the placeholder itself
+
             # Load and apply the new background immediately for preview
             try:
                 preview_bg = self.load_image(value)
                 if preview_bg:
                      self.bg_img = pygame.transform.smoothscale(preview_bg, (self.window_width, self.window_height))
                 else: # Handle load failure
-                     self.bg_img = pygame.Surface((self.window_width, self.window_height)); self.bg_img.fill((50,50,50))
+                     print(f"Warning: Could not load background preview for: {value}")
+                     # Optionally revert to a default or keep the old one
+                     # self.bg_img = pygame.Surface((self.window_width, self.window_height)); self.bg_img.fill((50,50,50))
             except Exception as e:
                 print(f"Error loading background preview: {e}")
+
+    def _init_tk_root(self):
+        """Initialize the tkinter root window for dialogs."""
+        # Make sure we don't already have a root
+        if self.tk_root:
+            try:
+                self.tk_root.destroy()
+            except tk.TclError: # Handle case where it might already be destroyed
+                pass
+            self.tk_root = None
+
+        # Create a new root window
+        self.tk_root = tk.Tk()
+        # Hide the root window
+        self.tk_root.withdraw()
+        # Bring it to the front (especially important on macOS)
+        self.tk_root.attributes('-topmost', True)
+        # Ensure it's shown over pygame window
+        self.tk_root.update()
+
+    def _select_background_from_file(self, widget_index):
+        """Opens a file dialog to select a background image."""
+        if not (0 <= widget_index < len(self.options_widgets)):
+            return
+
+        widget = self.options_widgets[widget_index]
+        if widget["key"] != "background_image_path":
+            return
+
+        self._init_tk_root()
+        try:
+            filepath = filedialog.askopenfilename(
+                parent=self.tk_root,
+                title="Select Background Image",
+                filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.gif"), ("All Files", "*.*")]
+            )
+
+            if filepath:
+                # Normalize path separators
+                filepath = os.path.normpath(filepath)
+                print(f"Selected background file: {filepath}")
+                # Update the temporary option value
+                self.temp_options[widget["key"]] = filepath
+                # Update the display value in the widget
+                widget["current_display_value"] = os.path.basename(filepath)
+                # Keep the index pointing to "Select from file..." visually
+                widget["current_index"] = widget["values"].index(config.SELECT_BACKGROUND_FROM_FILE)
+                # Trigger preview
+                self._preview_option_change(widget["key"], filepath)
+            else:
+                print("Background file selection cancelled.")
+                # If cancelled, revert the widget's display to the *actual* current background
+                current_saved_path = self.temp_options.get(widget["key"], config.DEFAULT_BG_IMG)
+                if current_saved_path == config.SELECT_BACKGROUND_FROM_FILE: # Should not happen, but safety check
+                    current_saved_path = config.DEFAULT_BG_IMG
+
+                if current_saved_path in widget["values"]:
+                    widget["current_index"] = widget["values"].index(current_saved_path)
+                    widget["current_display_value"] = widget["options"][widget["current_index"]]
+                else: # Custom path was active before cancelling
+                    widget["current_index"] = widget["values"].index(config.SELECT_BACKGROUND_FROM_FILE)
+                    widget["current_display_value"] = os.path.basename(current_saved_path)
+
+
+        except Exception as e:
+            print(f"Error opening file dialog: {e}")
+        finally:
+            if self.tk_root:
+                self.tk_root.destroy()
+                self.tk_root = None
 

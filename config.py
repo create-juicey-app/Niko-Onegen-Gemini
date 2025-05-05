@@ -382,3 +382,6 @@ DEFAULT_OPTIONS = {
     "monitor_selection": MONITOR_PRIMARY, # Default to primary monitor
     "ai_speak_frequency": AI_SPEAK_FREQUENCY_NEVER, # Default to never speak by itself
 }
+
+# Special value for file selection
+SELECT_BACKGROUND_FROM_FILE = "SELECT_FROM_FILE"

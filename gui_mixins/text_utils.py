@@ -1,6 +1,7 @@
 import pygame
 import re
 import config
+import traceback  # Import traceback for detailed error logging
 
 # Pre-compile regexes for efficiency
 _marker_regex_str = r'(\[face:[a-zA-Z0-9_]+\]|\[sfx:[a-zA-Z0-9_]+\])'
@@ -16,10 +17,10 @@ def wrap_text(text: str, font: pygame.font.Font, max_width_pixels: int) -> tuple
     current_text_stripped = text.strip()
 
     if not current_text_stripped or not font:
-        return [], 0 # Nothing to wrap
+        return [], 0  # Nothing to wrap
 
     parts = _word_splitter_regex.split(current_text_stripped)
-    parts = [p for p in parts if p] # Remove empty strings from split
+    parts = [p for p in parts if p]  # Remove empty strings from split
 
     wrapped_paragraphs = []
     current_line = ""
@@ -46,10 +47,10 @@ def wrap_text(text: str, font: pygame.font.Font, max_width_pixels: int) -> tuple
                 wrapped_paragraphs.append(current_line)
                 current_line = part
                 current_line_width = space_width
-        else: # It's a word
+        else:  # It's a word
             word = part
             try:
-                word_surface = font.render(word, True, (0,0,0))
+                word_surface = font.render(word, True, (0, 0, 0))
                 word_width = word_surface.get_width()
                 space_width = 0
                 if current_line and not current_line.endswith(" ") and not is_marker:
@@ -90,71 +91,136 @@ def wrap_text(text: str, font: pygame.font.Font, max_width_pixels: int) -> tuple
     return final_lines, get_visible_char_count
 
 
-def wrap_input_text(text: str, font: pygame.font.Font, max_width: int) -> tuple[list[str], list[int]]:
-    """Wraps input text based on font size and max width, returning lines and start indices."""
+def wrap_input_text(text: str, font: pygame.font.Font, max_width: int, cursor_pos: int = -1) -> tuple[list[str], tuple[int, int] | None]:
+    """Wraps text for the input box and calculates cursor position. (Revised Logic + Error Handling)"""
     wrapped_lines = []
-    line_start_indices = [0]
-    current_wrap_line = ""
-    original_text_ptr = 0
+    cursor_line_char_pos = None
 
-    words = re.split(r'(\s+)', text)
-    words = [w for w in words if w]
+    try:  # Add top-level try-except
+        # --- 1. Wrap Text ---
+        current_line = ""
+        current_width = 0
+        line_start_index = 0  # Track start index of the current line in original text
 
-    if not font:
-        print("Error: Input font not available for wrapping.")
-        return [text], [0]
+        if max_width <= 0:  # Prevent errors with zero or negative width
+            print(f"Warning: wrap_input_text called with max_width <= 0 ({max_width}). Using 1.")
+            max_width = 1
 
-    current_line_char_count = 0
+        for i, char in enumerate(text):
+            if char == '\n':
+                wrapped_lines.append(current_line)
+                current_line = ""
+                current_width = 0
+                line_start_index = i + 1
+                continue
 
-    for word in words:
-        is_space = word.isspace()
-        test_line = current_wrap_line + word
+            try:
+                # Use size caching if available or handle potential errors
+                char_width = font.size(char)[0]
+            except (pygame.error, AttributeError) as e:
+                # Fallback estimate if font.size fails
+                print(f"Warning: font.size failed for char '{char}': {e}. Estimating width.")
+                char_width = font.get_height() // 2 if font.get_height() > 0 else 10
 
-        try:
-            line_width = font.size(test_line)[0]
-
-            if line_width <= max_width:
-                current_wrap_line += word
-                current_line_char_count += len(word)
-            else:
-                if current_wrap_line:
-                    wrapped_lines.append(current_wrap_line)
-                    line_start_indices.append(original_text_ptr)
-
-                word_width = font.size(word)[0]
-
-                if not is_space and word_width > max_width:
-                    temp_long_word_line = ""
-                    for char_idx, char in enumerate(word):
-                        if font.size(temp_long_word_line + char)[0] <= max_width:
-                            temp_long_word_line += char
-                        else:
-                            wrapped_lines.append(temp_long_word_line)
-                            original_text_ptr += len(temp_long_word_line)
-                            line_start_indices.append(original_text_ptr)
-                            temp_long_word_line = char
-                    current_wrap_line = temp_long_word_line
-                    current_line_char_count = len(current_wrap_line)
+            # Check if adding the character exceeds max width
+            # Special case: if the line is empty, always add the first character
+            if current_line and current_width + char_width > max_width:
+                # Find the last space to wrap nicely if possible
+                wrap_index_in_line = current_line.rfind(' ')
+                if wrap_index_in_line != -1:
+                    # Wrap at the space
+                    wrapped_lines.append(current_line[:wrap_index_in_line])
+                    # Start new line with the part after the space + the current char
+                    remainder = current_line[wrap_index_in_line+1:]
+                    current_line = remainder + char
+                    try:
+                        current_width = font.size(current_line)[0]
+                    except (pygame.error, AttributeError):
+                        current_width = len(current_line) * (font.get_height() // 2 if font.get_height() > 0 else 10)
+                    # Adjust line_start_index for the new line (relative to original text)
+                    line_start_index += wrap_index_in_line + 1  # Start index is after the space
                 else:
-                    if word_width <= max_width:
-                        current_wrap_line = word.lstrip() if wrapped_lines else word
-                        current_line_char_count = len(current_wrap_line)
-                    else:
-                         current_wrap_line = word
-                         current_line_char_count = len(word)
-        except pygame.error as e:
-            print(f"Error calculating text size for wrapping: {e}")
-            wrapped_lines.append(current_wrap_line)
-            line_start_indices.append(original_text_ptr)
-            current_wrap_line = word
-            current_line_char_count = len(word)
+                    # No space found, force wrap mid-character/word
+                    wrapped_lines.append(current_line)
+                    current_line = char
+                    try:
+                        current_width = font.size(current_line)[0]
+                    except (pygame.error, AttributeError):
+                        current_width = len(current_line) * (font.get_height() // 2 if font.get_height() > 0 else 10)
+                    # Adjust line_start_index (relative to original text)
+                    line_start_index = i  # Start index is the current character
+            else:
+                # Add character to current line
+                current_line += char
+                current_width += char_width
 
-        original_text_ptr += len(word)
+        # Add the last line
+        wrapped_lines.append(current_line)
 
-    if current_wrap_line:
-        wrapped_lines.append(current_wrap_line)
+        # Ensure wrapped_lines has at least one empty string if text was empty
+        if not wrapped_lines and not text:
+            wrapped_lines = [""]
 
-    if not text:
-        return [], [0]
+        # --- 2. Find Cursor Position in Wrapped Lines ---
+        if cursor_pos != -1:
+            chars_counted = 0
+            found = False
+            for line_idx, line in enumerate(wrapped_lines):
+                line_len = len(line)
+                # Calculate the effective length of this line in the original text,
+                # including the newline character if it's not the last line.
+                # This helps map the overall cursor_pos correctly.
+                effective_len_in_original = line_len + (1 if line_idx < len(wrapped_lines) - 1 else 0)
 
-    return wrapped_lines, line_start_indices
+                # Check if the overall cursor_pos falls within the character range
+                # represented by this wrapped line (relative to the original text).
+                if chars_counted <= cursor_pos < chars_counted + effective_len_in_original:
+                    # Calculate the character index *within this specific wrapped line*.
+                    char_index_in_line = cursor_pos - chars_counted
+                    # Ensure the calculated index doesn't exceed the actual length of the wrapped line.
+                    # (This can happen if the cursor is conceptually where the newline would be).
+                    char_index_in_line = min(char_index_in_line, line_len)
+
+                    cursor_line_char_pos = (line_idx, char_index_in_line)
+                    found = True
+                    break
+                chars_counted += effective_len_in_original
+
+            # Handle cursor being exactly at the end of the entire text
+            if not found and cursor_pos == len(text):
+                last_line_idx = len(wrapped_lines) - 1
+                # Ensure last_line_idx is valid before accessing wrapped_lines
+                last_line_len = len(wrapped_lines[last_line_idx]) if wrapped_lines and last_line_idx >= 0 else 0
+                cursor_line_char_pos = (max(0, last_line_idx), last_line_len)  # Use max(0,...) for safety
+                found = True  # Mark as found
+
+            # Fallback if cursor position calculation failed (should be rare with this logic)
+            if not found:  # If still not found after checks
+                print(f"Warning: Cursor position {cursor_pos} not located in wrapped text (revised). Defaulting to end.")
+                last_line_idx = len(wrapped_lines) - 1 if wrapped_lines else 0
+                last_line_len = len(wrapped_lines[last_line_idx]) if wrapped_lines and last_line_idx >= 0 else 0
+                cursor_line_char_pos = (max(0, last_line_idx), max(0, last_line_len))
+
+        # Final check for empty text case (only if cursor_pos is valid)
+        if not text and cursor_pos == 0:  # More specific check for empty text cursor
+            cursor_line_char_pos = (0, 0)  # Cursor at start of the single empty line
+
+        # --- Reinforce: Ensure tuple if cursor_pos != -1 ---
+        if cursor_pos != -1 and not isinstance(cursor_line_char_pos, tuple):
+            print(f"CRITICAL WARNING: cursor_line_char_pos ended up as non-tuple ({type(cursor_line_char_pos)}: {cursor_line_char_pos}) despite cursor_pos={cursor_pos}. Forcing default.")
+            last_line_idx = len(wrapped_lines) - 1 if wrapped_lines else 0
+            last_line_len = len(wrapped_lines[last_line_idx]) if wrapped_lines and last_line_idx >= 0 else 0
+            cursor_line_char_pos = (max(0, last_line_idx), max(0, last_line_len))
+        # --- End Reinforcement ---
+
+    except Exception as e:
+        print(f"CRITICAL ERROR in wrap_input_text: {e}")
+        print(traceback.format_exc())  # Print full traceback
+        # Attempt to return safe defaults
+        if not wrapped_lines: wrapped_lines = ["<Error>"]
+        if cursor_pos != -1:
+            cursor_line_char_pos = (0, 0)  # Default to start of first line on error
+        else:
+            cursor_line_char_pos = None  # Maintain None if cursor_pos was -1
+
+    return wrapped_lines, cursor_line_char_pos

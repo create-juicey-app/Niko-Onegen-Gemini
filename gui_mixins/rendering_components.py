@@ -162,64 +162,65 @@ class RenderingComponentsMixin:
                 break # Stop processing more lines
 
 
-    def render_input_box(self, target_surface):
-        """Renders the text input box if active and not hidden."""
-        # --- Check if input should be rendered ---
-        if not self.is_input_active and not self.is_input_hidden:
-             # If input is neither active nor explicitly hidden, don't draw.
-             # This handles the case where dialogue is showing.
-             return
-        if self.is_input_hidden:
-             # If input is explicitly hidden by the user, don't draw.
-             return
-        # --- End Check ---
-
-        if not hasattr(self, 'input_rect') or not hasattr(self, 'input_font'):
-            print("Warning: Input rendering skipped, input_rect or input_font missing.")
+    def render_input_box(self, surface):
+        """Renders the text input box, including text and cursor."""
+        if not self.is_input_active:
             return
 
-        # Draw background rectangle
-        pygame.draw.rect(target_surface, config.INPUT_BOX_BG_COLOR, self.input_rect)
-        # Draw border
-        pygame.draw.rect(target_surface, config.INPUT_BOX_BORDER_COLOR, self.input_rect, config.INPUT_BOX_BORDER_WIDTH)
+        # Draw background and border
+        pygame.draw.rect(surface, config.INPUT_BOX_BG_COLOR, self.input_rect)
+        pygame.draw.rect(surface, config.INPUT_BOX_BORDER_COLOR, self.input_rect, config.INPUT_BOX_BORDER_WIDTH)
 
-        # Wrap and render text
         try:
             max_render_width = self.input_rect.width - config.INPUT_BOX_PADDING * 2
-            wrapped_lines, char_positions = wrap_input_text(self.user_input_text, self.input_font, max_render_width)
+            wrapped_lines, cursor_line_char_pos = wrap_input_text(
+                self.user_input_text, self.input_font, max_render_width, self.input_cursor_pos
+            )
 
             line_height = self.input_font.get_height()
-            cursor_line_index = -1
-            cursor_char_index_in_line = -1
-            cursor_x_offset = 0
+            start_x = self.input_rect.left + config.INPUT_BOX_PADDING
+            start_y = self.input_rect.top + config.INPUT_BOX_PADDING
 
-            current_y = self.input_rect.top + config.INPUT_BOX_PADDING
-
+            # --- Render Text Lines ---
             for i, line in enumerate(wrapped_lines):
-                line_surface = self.input_font.render(line, True, config.INPUT_BOX_TEXT_COLOR)
-                target_surface.blit(line_surface, (self.input_rect.left + config.INPUT_BOX_PADDING, current_y))
+                text_surface = self.input_font.render(line, True, config.INPUT_BOX_TEXT_COLOR)
+                text_rect = text_surface.get_rect(topleft=(start_x, start_y + i * line_height))
+                surface.blit(text_surface, text_rect)
 
-                # Find cursor position within this line
-                if cursor_line_index == -1:
-                    line_start_char_index = char_positions[i][0]
-                    line_end_char_index = char_positions[i][1]
-                    if line_start_char_index <= self.input_cursor_pos <= line_end_char_index:
-                        cursor_line_index = i
-                        cursor_char_index_in_line = self.input_cursor_pos - line_start_char_index
-                        # Calculate cursor X offset based on text rendered *before* the cursor on this line
-                        cursor_x_offset = self.input_font.size(line[:cursor_char_index_in_line])[0]
+            # --- Render Cursor ---
+            if self.input_cursor_visible:
+                if cursor_line_char_pos is not None: # Explicit check
+                    cursor_line_index = cursor_line_char_pos[0]
+                    cursor_char_index = cursor_line_char_pos[1]
 
-                current_y += line_height
+                    # Calculate cursor position based on wrapped lines and character index
+                    if 0 <= cursor_line_index < len(wrapped_lines):
+                        line_text_before_cursor = wrapped_lines[cursor_line_index][:cursor_char_index]
+                        try:
+                            cursor_offset_x = self.input_font.size(line_text_before_cursor)[0]
+                        except (pygame.error, AttributeError):
+                            cursor_offset_x = cursor_char_index * (self.input_font.get_height() // 2) # Estimate
 
-            # Draw cursor if visible and position found
-            if self.input_cursor_visible and cursor_line_index != -1:
-                cursor_x = self.input_rect.left + config.INPUT_BOX_PADDING + cursor_x_offset
-                cursor_y = self.input_rect.top + config.INPUT_BOX_PADDING + (cursor_line_index * line_height)
-                cursor_rect = pygame.Rect(cursor_x, cursor_y, 2, line_height) # Simple vertical line cursor
-                pygame.draw.rect(target_surface, config.INPUT_BOX_TEXT_COLOR, cursor_rect)
+                        cursor_x = start_x + cursor_offset_x
+                        cursor_y = start_y + cursor_line_index * line_height
+
+                        # Draw cursor (vertical line)
+                        pygame.draw.line(surface, config.INPUT_BOX_TEXT_COLOR, (cursor_x, cursor_y), (cursor_x, cursor_y + line_height), 2)
+                    else:
+                        print(f"Warning: Invalid cursor_line_index ({cursor_line_index}) from wrap_input_text.")
+
+                else: # Handle case where cursor_line_char_pos is None
+                    print("Warning: cursor_line_char_pos is None in render_input_box. Skipping cursor render.")
 
         except Exception as e:
             print(f"Error rendering input text/cursor: {e}")
+            try:
+                error_font = pygame.font.Font(None, 18)
+                error_surf = error_font.render("Render Error", True, (255, 0, 0))
+                error_rect = error_surf.get_rect(center=self.input_rect.center)
+                surface.blit(error_surf, error_rect)
+            except Exception as e2:
+                print(f"Error rendering error indicator: {e2}")
 
 
     def draw_multiple_choice(self, surface):

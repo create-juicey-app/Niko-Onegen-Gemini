@@ -776,9 +776,10 @@ class HistoryMixin:
         if self.tk_root:
             try:
                 self.tk_root.destroy()
-            except:
+            except tk.TclError: # Handle case where it might already be destroyed
                 pass
-                
+            self.tk_root = None
+
         # Create a new root window
         self.tk_root = tk.Tk()
         # Hide the root window
