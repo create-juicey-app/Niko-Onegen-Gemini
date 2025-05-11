@@ -1,6 +1,7 @@
 # It's quite literally the config.
 # its the config. nothing else.
 import os
+import sys  # Added import
 from enum import Enum
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -8,11 +9,17 @@ from typing import List, Literal
 
 load_dotenv() # Load environment variables from .env file
 
-# --- Window Settings ---
-# Screen dimensions are now determined dynamically in gui.py
-
 # --- Resource Paths ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Function to determine the base directory for resources
+def get_base_dir():
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running in a PyInstaller bundle
+        return sys._MEIPASS
+    else:
+        # Running in a normal Python environment
+        return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = get_base_dir() # Updated BASE_DIR definition
 RES_DIR = os.path.join(BASE_DIR, "res")
 FONT_DIR = os.path.join(RES_DIR, "font")
 SFX_DIR = os.path.join(RES_DIR, "sfx") # Kept for global SFX
