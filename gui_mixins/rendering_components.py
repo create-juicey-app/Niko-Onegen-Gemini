@@ -1,9 +1,13 @@
 import pygame
+import pygame.surfarray
 import config
 import math
 import os
 import re
 from .text_utils import wrap_input_text # Import the wrapping utility
+
+CHOICE_ICON_SIZE = (40, 40)  # Example size, adjust as needed
+CHOICE_ICON_PADDING = 5     # Padding between icon and text
 
 class RenderingComponentsMixin:
     """Mixin containing methods for drawing specific UI components."""
@@ -101,11 +105,23 @@ class RenderingComponentsMixin:
                     # Process face marker if we've reached or passed its position
                     if segment_start_plain_char_index <= self.current_char_index:
                         face_name = match.group(2)
-                        new_face = self.active_face_images.get(face_name)
+                        new_face = self.face_images.get(face_name) # Use self.face_images
                         if new_face:
                             self.current_face_image = new_face
                         else:
-                            print(f"Warning: Face '{face_name}' referenced in text not found.")
+                            # Modified: Get default face from character data and use it as fallback
+                            default_face = None
+                            if hasattr(self, 'character_data') and self.character_data:
+                                default_face_name = self.character_data.defaultFace
+                                default_face = self.face_images.get(default_face_name)
+                                print(f"Warning: Face '{face_name}' referenced in text not found. Using default face '{default_face_name}'.")
+                            else:
+                                print(f"Warning: Face '{face_name}' referenced in text not found. Character data unavailable.")
+                            
+                            if default_face:
+                                self.current_face_image = default_face
+                            elif self.face_images:  # Last resort: use any available face
+                                self.current_face_image = next(iter(self.face_images.values()))
                     # Face markers don't consume render space or plain chars
                     continue
 
@@ -223,93 +239,152 @@ class RenderingComponentsMixin:
                 print(f"Error rendering error indicator: {e2}")
 
 
-    def draw_multiple_choice(self, surface):
-        """Draws the multiple choice options centered on the screen, truncating long text."""
-        # ... existing code from choices.py ...
+    def draw_multiple_choice(self, screen: pygame.Surface):
+        """Draws the multiple choice options on the screen."""
         if not self.is_choice_active or not self.choice_options:
             return
 
-        # Calculate dimensions and positioning
-        max_width = 0
-        initial_rendered_surfaces = [] # Store initial renders to get max width
-        for option_text in self.choice_options:
-            text_surf = self.choice_font.render(option_text, True, self.choice_color)
-            initial_rendered_surfaces.append(text_surf)
-            max_width = max(max_width, text_surf.get_width())
+        self.choice_rects = []  # Clear previous rects
 
-        # Define item height and gap
-        item_height = self.choice_font.get_height() + self.choice_padding # Height of one item's background
-        gap = config.CHOICE_SPACING_EXTRA # Gap between items
-        effective_item_spacing = item_height + gap # Total vertical space allocated per item
+        # grid layout for icon+text entries
+        if self.choice_options and isinstance(self.choice_options[0], tuple):
+            cols   = 4
+            total  = len(self.choice_options)
+            rows   = (total + cols - 1) // cols
 
-        # Calculate total height of the choice block
-        total_height = (len(self.choice_options) * effective_item_spacing) - gap + (self.choice_padding * 2)
-        start_y = (self.window_height - total_height) // 2 # Center the block vertically
+            # spacing
+            h_gap  = 20
+            v_gap  = 20
 
-        # Calculate width of the main background block based on the widest *original* text
-        block_width = max_width + self.choice_padding * 4 # Add padding around the widest text
-        # Ensure block width doesn't exceed screen width minus margins
-        max_allowed_block_width = self.window_width - 40 # Example margin
-        block_width = min(block_width, max_allowed_block_width)
-        block_x = (self.window_width - block_width) // 2
+            # measure icon/text
+            icon_h = CHOICE_ICON_SIZE[1]
+            text_h = self.choice_font.get_height()
+            cell_h = icon_h + CHOICE_ICON_PADDING + text_h + self.choice_padding
 
-        # Draw main background for the whole block
-        bg_rect = pygame.Rect(block_x, start_y, block_width, total_height)
-        pygame.draw.rect(surface, self.choice_bg_color, bg_rect, border_radius=8)
+            # compute total grid height
+            total_h = rows * cell_h + (rows - 1) * v_gap
 
-        # Starting y for the first item's background rect, inside the main block padding
-        y = start_y + self.choice_padding
-        self.choice_rects = [] # Reset rects for collision detection
+            # base top below textbox
+            base_top = self.textbox_y + self.textbox_img.get_height() + 20
 
-        # Calculate max width available for text *inside* the block's padding
-        max_text_width = block_width - (self.choice_padding * 2)
+            # move grid up by half of extra height
+            top = base_top - max(0, (total_h - cell_h) / 2)
 
-        for i, option_text in enumerate(self.choice_options):
-            # Initial render to check width
-            text_surf = self.choice_font.render(option_text, True, self.choice_color)
-            display_surf = text_surf # Surface to actually draw
-            current_text = option_text
+            left   = self.choice_padding
+            cell_w = (self.window_width - 2*self.choice_padding - (cols-1)*h_gap) / cols
 
-            # --- Truncation Logic ---
-            while display_surf.get_width() > max_text_width and len(current_text) > 1:
-                # Remove last character before ellipsis (if adding one)
-                current_text = current_text[:-1]
-                # Render with ellipsis
-                display_surf = self.choice_font.render(current_text + "...", True, self.choice_color)
-                # If even "..." is too wide, break (shouldn't happen with reasonable fonts/padding)
-                if len(current_text) <= 1 and display_surf.get_width() > max_text_width:
-                     # As a fallback, render just "..." if it fits, otherwise empty
-                     ellipsis_surf = self.choice_font.render("...", True, self.choice_color)
-                     if ellipsis_surf.get_width() <= max_text_width:
-                          display_surf = ellipsis_surf
-                     else: # Render nothing if even ellipsis doesn't fit
-                          display_surf = pygame.Surface((0,0))
-                     break
-            # --- End Truncation ---
+            self.choice_rects = []
+            for idx, (text, icon) in enumerate(self.choice_options):
+                r, c = divmod(idx, cols)
+                x    = left + c * (cell_w + h_gap)
+                y    = top  + r * (cell_h + v_gap)
+                rect = pygame.Rect(x, y, cell_w, cell_h)
 
-            # Calculate the background rect for this specific item
-            # Use the width of the *displayed* (potentially truncated) text for item bg width
-            item_bg_width = display_surf.get_width() + self.choice_padding * 2
-            # Center item_bg horizontally *within* the main bg_rect
-            item_bg_x = bg_rect.centerx - (item_bg_width // 2)
-            item_bg_rect = pygame.Rect(
-                item_bg_x, # Use calculated centered x
-                y,
-                item_bg_width,
-                item_height # Use calculated item height
+                # derive bg color by averaging all pixels of icon, fallback to menu_bg_color
+                if icon:
+                    try:
+                        arr = pygame.surfarray.array3d(icon)
+                        avg = arr.mean(axis=(0,1))
+                        def _adj(c: float) -> int:
+                            return min(255, max(0, int(((int(c)-128)*1.2 + 128)*0.9)))
+                        cell_color = (_adj(avg[0]), _adj(avg[1]), _adj(avg[2]))
+                    except Exception:
+                        cell_color = getattr(self, 'menu_bg_color', (50,50,50))
+                else:
+                    cell_color = getattr(self, 'menu_bg_color', (50,50,50))
+
+                pygame.draw.rect(screen, cell_color, rect, border_radius=8)
+
+                # icon
+                if icon:
+                    icon_s = pygame.transform.smoothscale(icon, CHOICE_ICON_SIZE)
+                    ix = x + (cell_w - CHOICE_ICON_SIZE[0])//2
+                    iy = y
+                    screen.blit(icon_s, (ix, iy))
+
+                # label
+                color = (self.choice_highlight_color if idx == self.selected_choice_index
+                         else self.choice_color)
+                ts    = self.choice_font.render(text, True, color)
+                tx    = x + (cell_w - ts.get_width())//2
+                ty    = y + icon_h + CHOICE_ICON_PADDING
+                screen.blit(ts, (tx, ty))
+
+                self.choice_rects.append(rect)
+            return
+
+        base_y = self.textbox_y + self.textbox_img.get_height() + 20 # Below textbox
+        if hasattr(self, 'input_rect') and self.is_input_active: # If input is active, draw above it
+             base_y = self.input_rect.y - (len(self.choice_options) * (self.choice_font.get_height() + self.choice_spacing) + 20)
+        elif hasattr(self, 'input_rect') and not self.is_input_active and not self.current_text: # if input not active and no dialogue, position near where input would be
+             base_y = self.input_box_y - (len(self.choice_options) * (self.choice_font.get_height() + self.choice_spacing) + 20)
+
+        min_y_for_choices = self.textbox_y # Don't overlap with textbox top
+        calculated_total_height = len(self.choice_options) * (max(self.choice_font.get_height(), CHOICE_ICON_SIZE[1]) + self.choice_spacing) - self.choice_spacing
+        
+        if hasattr(self, 'input_rect') and self.is_input_active:
+            base_y = self.input_rect.y - calculated_total_height - 10 # 10px padding above input
+        elif hasattr(self, 'input_rect') and not self.is_input_active and not self.current_text and not self.is_menu_active:
+             base_y = self.input_box_y - calculated_total_height - 10
+        elif self.is_menu_active:
+            menu_items_total_height = len(self.choice_options) * (max(self.choice_font.get_height(), CHOICE_ICON_SIZE[1] if any(isinstance(opt, tuple) and opt[1] for opt in self.choice_options) else 0) + self.choice_spacing) - self.choice_spacing
+            base_y = (self.window_height - menu_items_total_height) // 2
+        else:
+            base_y = self.textbox_y + self.textbox_img.get_height() + 15
+
+        base_y = max(base_y, min_y_for_choices)
+
+        for i, option_data in enumerate(self.choice_options):
+            text_content: str
+            icon_surface: pygame.Surface | None = None
+
+            if isinstance(option_data, tuple) and len(option_data) == 2:
+                text_content, icon_surface = option_data
+            elif isinstance(option_data, str): # Fallback for simple string options
+                text_content = option_data
+            else:
+                text_content = "Error: Invalid choice format" # Should not happen
+
+            color = self.choice_highlight_color if i == self.selected_choice_index else self.choice_color
+            
+            effective_line_height = max(self.choice_font.get_height(), CHOICE_ICON_SIZE[1] if icon_surface else 0)
+            y_pos = base_y + i * (effective_line_height + self.choice_spacing)
+
+            current_x_offset = 0
+            icon_render_width = 0
+            if icon_surface:
+                try:
+                    scaled_icon = pygame.transform.smoothscale(icon_surface, CHOICE_ICON_SIZE)
+                    icon_rect = scaled_icon.get_rect()
+                    icon_y = y_pos + (effective_line_height - CHOICE_ICON_SIZE[1]) // 2
+                    screen.blit(scaled_icon, (self.textbox_x + self.choice_padding + current_x_offset, icon_y))
+                    current_x_offset += CHOICE_ICON_SIZE[0] + CHOICE_ICON_PADDING
+                    icon_render_width = CHOICE_ICON_SIZE[0] + CHOICE_ICON_PADDING
+                except Exception as e:
+                    print(f"Error rendering choice icon: {e}")
+
+            text_surface = self.choice_font.render(text_content, True, color)
+            text_rect = text_surface.get_rect()
+            text_x = self.textbox_x + self.choice_padding + current_x_offset
+            text_y = y_pos + (effective_line_height - text_rect.height) // 2
+            screen.blit(text_surface, (text_x, text_y))
+
+            content_width = icon_render_width + text_rect.width
+            choice_item_width = max(content_width + self.choice_padding * 2, config.TEXTBOX_WIDTH // 2)
+            if self.is_menu_active:
+                 choice_item_width = config.TEXTBOX_WIDTH - self.choice_padding * 2
+
+            rect_x = self.textbox_x + self.choice_padding
+            rect_x = (self.window_width - choice_item_width) // 2
+
+            choice_rect = pygame.Rect(
+                rect_x,
+                y_pos - self.choice_padding // 2,
+                choice_item_width,
+                effective_line_height + self.choice_padding
             )
-            self.choice_rects.append(item_bg_rect) # Store this rect for collision
-
-            # Draw highlight if selected (using item_bg_rect)
-            if i == self.selected_choice_index:
-                pygame.draw.rect(surface, self.choice_highlight_color, item_bg_rect, border_radius=5)
-
-            # Calculate text position centered within item_bg_rect
-            text_rect = display_surf.get_rect(center=item_bg_rect.center)
-            surface.blit(display_surf, text_rect) # Blit the potentially truncated text
-
-            # Increment y for the next item's background top
-            y += effective_item_spacing
+            pygame.draw.rect(screen, self.menu_bg_color, choice_rect, border_radius=8)
+            self.choice_rects.append(choice_rect)
 
 
     def draw_options_menu(self, surface):

@@ -963,9 +963,9 @@ class HistoryMixin:
 
     def _add_face_to_bubble(self, bubble_surf: pygame.Surface, face_name: str):
         """Add a character face to the message bubble."""
-        face_image = self.active_face_images.get(face_name)
+        face_image = self.face_images.get(face_name)
         if not face_image: 
-            face_image = self.active_face_images.get("normal")
+            face_image = self.face_images.get("normal")
         if face_image:
             try:
                 scaled_face = pygame.transform.smoothscale(face_image, (self.HISTORY_FACE_SIZE, self.HISTORY_FACE_SIZE))

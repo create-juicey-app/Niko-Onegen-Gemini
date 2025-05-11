@@ -1,4 +1,3 @@
-
 # Manages loading and saving application settings from/to a JSON file.
 # Provides default values and handles potential file errors.
 
@@ -24,6 +23,16 @@ def load_options() -> dict:
 
     if not os.path.exists(OPTIONS_FILE):
         logging.info(f"Options file '{OPTIONS_FILE}' not found. Creating with defaults.")
+        # Ensure default character ID is valid before saving for the first time
+        if "active_character_id" in default_opts:
+            from character_manager import get_available_characters # Local import
+            available_chars = get_available_characters()
+            if not available_chars: # No characters found at all
+                logging.error("CRITICAL: No character JSON files found. Application might not work.")
+                # default_opts.pop("active_character_id", None) # Or set to a placeholder
+            elif default_opts["active_character_id"] not in available_chars:
+                default_opts["active_character_id"] = available_chars[0] # Default to first available
+        
         save_options(default_opts)
         return default_opts
 
@@ -48,6 +57,18 @@ def load_options() -> dict:
                   logging.warning("Invalid window dimensions in options file, resetting to default.")
                   options["window_width"] = default_opts["window_width"]
                   options["window_height"] = default_opts["window_height"]
+
+        if "active_character_id" in options:
+            from character_manager import get_available_characters # Local import
+            available_chars = get_available_characters()
+            if not available_chars:
+                logging.warning(f"No character JSONs found, but 'active_character_id' is in options. This might cause issues.")
+            elif options["active_character_id"] not in available_chars:
+                logging.warning(f"Saved character '{options['active_character_id']}' not found. Resetting to default.")
+                options["active_character_id"] = default_opts["active_character_id"]
+                # Re-validate default if necessary
+                if options["active_character_id"] not in available_chars and available_chars:
+                    options["active_character_id"] = available_chars[0]
 
         return options
 

@@ -5,6 +5,7 @@ import options # Import the options module for saving
 # Add tkinter import for file dialogs
 import tkinter as tk
 from tkinter import filedialog
+import character_manager # Import the new manager
 
 class OptionsMenuMixin:
     """Mixin class for handling the dedicated options menu screen state."""
@@ -173,9 +174,14 @@ class OptionsMenuMixin:
             "values": speech_values,
             "current_index": 0
         })
-        y_offset += widget_height + spacing + 20 # Extra space before buttons
+        y_offset += widget_height + spacing
 
-        # 9. Save Button
+        # 9. hard erased cuz i don't like it, but you can add it back if you want, just good luck x3
+        # Extra space before buttons, applied to the current y_offset
+        # (which will be higher if char dropdown was added)
+        y_offset += 20
+
+        # 10. Save Button
         button_width = 100
         button_height = 40
         save_x = self.window_width // 2 - button_width - 10
@@ -187,7 +193,7 @@ class OptionsMenuMixin:
             "action": "save"
         })
 
-        # 10. Cancel Button
+        # 11. Cancel Button
         cancel_x = self.window_width // 2 + 10
         self.options_widgets.append({
             "key": "cancel_button",
@@ -243,10 +249,31 @@ class OptionsMenuMixin:
                         self.temp_options[key] = widget["values"][0] # Update temp option
                         if key == "background_image_path":
                              widget["current_display_value"] = widget["options"][0]
+                elif widget["type"] == "dropdown":
+                    current_value = widget.get("current_value", widget["values"][0] if widget["values"] else None)
+                    try:
+                        current_index = widget["values"].index(current_value)
+                        widget["display_text"] = widget["options"][current_index]
+                    except (ValueError, IndexError):
+                        # Fallback if current_value is not in values or options/values mismatch
+                        widget["display_text"] = widget["options"][0] if widget["options"] else "N/A"
+                        current_index = 0
 
-        # Set TWM face/sfx for the options menu itself
-        self.set_active_face_set("twm")
-        self.set_active_sfx("robot")
+        # Store current active face and sfx before switching
+        self._stored_face_set = getattr(self, 'active_face_set', None) 
+        self._stored_sfx_set = getattr(self, 'active_sfx_set', None)
+        
+        # Try to use TWM resources if available, otherwise keep current
+        try:
+            # Check if we have TWM faces
+            if hasattr(self, 'twm_face_images'):
+                self.set_active_face_set("twm")
+            # Check if we have robot sfx 
+            if hasattr(self, 'robot_sfx'):
+                self.set_active_sfx("robot")
+        except Exception as e:
+            print(f"Warning: Could not set TWM resources for options menu: {e}")
+            
         # Ensure no dialogue is displayed
         self.current_text = ""
         self.is_animating = False
@@ -309,9 +336,23 @@ class OptionsMenuMixin:
             # Revert volume preview if any was done
             self.set_sfx_volume(self.options["sfx_volume"])
 
-        # Restore original face/sfx set (assuming it was Niko before entering options)
-        self.set_active_face_set("niko")
-        self.set_active_sfx("default")
+        # Restore original face/sfx set
+        try:
+            if self._stored_face_set:
+                self.set_active_face_set(self._stored_face_set)
+            if self._stored_sfx_set:
+                self.set_active_sfx(self._stored_sfx_set)
+        except Exception as e:
+            print(f"Warning: Could not restore original face/sfx: {e}")
+            # Fallback to default character resources
+            try:
+                if hasattr(self, 'character_data'):
+                    face_set = getattr(self.character_data, 'faceSet', 'niko')
+                    sfx_set = getattr(self.character_data, 'sfxSet', 'default')
+                    self.set_active_face_set(face_set)
+                    self.set_active_sfx(sfx_set)
+            except Exception as e2:
+                print(f"Warning: Fallback to character defaults also failed: {e2}")
 
     def _preview_option_change(self, key, value):
         """Applies a preview effect for certain options when changed."""

@@ -54,7 +54,7 @@ class DialogueMixin:
             self.last_face_image = self.current_face_image
         else:
             # Ensure last_face_image is initialized if current_face_image isn't set yet
-            self.last_face_image = self.active_face_images.get("normal")
+            self.last_face_image = self.face_images.get("normal")
 
 
         # Reset flags and states
@@ -67,7 +67,7 @@ class DialogueMixin:
         if not dialogue_data:
             self.current_text = "..." # Default text for empty data
             # Try to set face to sad, fallback to normal, then last resort placeholder
-            self.current_face_image = self.active_face_images.get("sad", self.active_face_images.get("normal"))
+            self.current_face_image = self.face_images.get("sad", self.face_images.get("normal"))
             if not self.current_face_image: # Final fallback
                  placeholder_surface = pygame.Surface((config.FACE_WIDTH, config.FACE_HEIGHT)); placeholder_surface.fill((255,0,255))
                  self.current_face_image = placeholder_surface
@@ -80,14 +80,19 @@ class DialogueMixin:
             self.current_text = dialogue_data.text
             face_name = dialogue_data.face
             # Try to get the specified face, fallback to normal, then placeholder
-            self.current_face_image = self.active_face_images.get(face_name)
-            if not self.current_face_image:
-                 print(f"Warning: Face '{face_name}' not found. Falling back to 'normal'.")
-                 self.current_face_image = self.active_face_images.get("normal")
-                 if not self.current_face_image: # Final fallback
-                      print(f"Critical Warning: Face 'normal' also not found. Using placeholder.")
-                      placeholder_surface = pygame.Surface((config.FACE_WIDTH, config.FACE_HEIGHT)); placeholder_surface.fill((255,0,255))
-                      self.current_face_image = placeholder_surface
+            if self.character_data: # Ensure character_data is loaded
+                self.current_face_image = self.face_images.get(face_name) # Use self.face_images
+                if not self.current_face_image:
+                    print(f"Warning: Face '{face_name}' not found for character '{self.character_data.displayName}'. Using default face '{self.character_data.defaultFace}'.")
+                    self.current_face_image = self.face_images.get(self.character_data.defaultFace) # Use self.face_images
+                    # If default also not found (should be rare if load_character_resources worked)
+                    if not self.current_face_image and self.face_images:
+                        self.current_face_image = next(iter(self.face_images.values())) # Fallback to first available
+            else:
+                # Fallback if character_data isn't available for some reason (should not happen in normal flow)
+                print("Warning: self.character_data not available in set_dialogue. Face might not be set correctly.")
+                # Attempt to use a generic 'normal' face if face_images has it, or just the first one
+                self.current_face_image = self.face_images.get('normal', next(iter(self.face_images.values())) if self.face_images else None) # Use self.face_images
 
             # --- Text Speed Calculation ---
             # Define speed modifiers (Ideally, this map should be in config.py)

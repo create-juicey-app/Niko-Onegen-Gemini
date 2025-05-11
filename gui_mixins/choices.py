@@ -1,11 +1,29 @@
 import pygame
 import config
+from .rendering_components import RenderingComponentsMixin
 
 class ChoicesMixin:
     """Mixin class for handling multiple-choice interactions."""
 
-    def draw_multiple_choice(self, target_surface): # Changed 'surface' to 'target_surface'
-        """Draws the multiple choice options centered on the screen, truncating long text."""
+    def draw_multiple_choice(self, *args, **kwargs):
+        """
+        Draws multiple‐choice options.
+        If choice_options contain (text, image) tuples, delegate to RenderingComponentsMixin.
+        Otherwise use the original text‐only implementation.
+        """
+        # determine target surface
+        if args:
+            surface = args[0]
+        elif 'target_surface' in kwargs:
+            surface = kwargs['target_surface']
+        else:
+            surface = getattr(self, 'screen', None)
+
+        # if first option is a tuple => image+text mode
+        if self.choice_options and isinstance(self.choice_options[0], tuple):
+            return RenderingComponentsMixin.draw_multiple_choice(self, surface)
+
+        # Original text-only drawing logic
         if not self.is_choice_active or not self.choice_options:
             return
 
@@ -35,7 +53,7 @@ class ChoicesMixin:
 
         # Draw main background for the whole block
         bg_rect = pygame.Rect(block_x, start_y, block_width, total_height)
-        pygame.draw.rect(target_surface, self.choice_bg_color, bg_rect, border_radius=8) # Use target_surface
+        pygame.draw.rect(surface, self.choice_bg_color, bg_rect, border_radius=8) # Use surface
 
         # Starting y for the first item's background rect, inside the main block padding
         y = start_y + self.choice_padding
@@ -82,11 +100,11 @@ class ChoicesMixin:
 
             # Draw highlight if selected (using item_bg_rect)
             if i == self.selected_choice_index:
-                pygame.draw.rect(target_surface, self.choice_highlight_color, item_bg_rect, border_radius=5) # Use target_surface
+                pygame.draw.rect(surface, self.choice_highlight_color, item_bg_rect, border_radius=5) # Use surface
 
             # Calculate text position centered within item_bg_rect
             text_rect = display_surf.get_rect(center=item_bg_rect.center)
-            target_surface.blit(display_surf, text_rect) # Use target_surface
+            surface.blit(display_surf, text_rect) # Use surface
 
             # Increment y for the next item's background top
             y += effective_item_spacing

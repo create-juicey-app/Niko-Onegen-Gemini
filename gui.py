@@ -10,10 +10,11 @@ import re
 import time
 import math
 import random
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from config import NikoResponse, TextSpeed, TEXT_SPEED_MAP, get_available_sfx, get_available_faces
 import platform
 
+import pygame.surfarray
 # Import Mixins
 from gui_mixins.resources import ResourcesMixin
 from gui_mixins.dialogue import DialogueMixin
@@ -26,6 +27,10 @@ from gui_mixins.options_menu import OptionsMenuMixin
 from gui_mixins.rendering_components import RenderingComponentsMixin
 from gui_mixins.event_handlers import EventHandlersMixin
 from gui_mixins.history import HistoryMixin
+from gui_mixins.character_choice import CharacterChoiceMixin # Add this import
+
+if TYPE_CHECKING:
+    from character_manager import Character
 
 if platform.system() == "Windows":
     import ctypes
@@ -34,15 +39,17 @@ if platform.system() == "Windows":
 # Inherit from all mixins including the new ones
 class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
           RenderingMixin, EventsMixin, OptionsMenuMixin,
-          RenderingComponentsMixin, EventHandlersMixin, HistoryMixin):
+          RenderingComponentsMixin, EventHandlersMixin, HistoryMixin,
+          CharacterChoiceMixin): # Add CharacterChoiceMixin
     """
     Handles the graphical user interface, rendering, and events by combining
     functionality from various specialized mixin classes.
     """
 
-    def __init__(self, initial_options):
+    def __init__(self, initial_options: dict, character_data: 'Character'): # Added character_data
         # Let the variable hoarding begin! (Kept in main class for shared state)
         self.options = initial_options
+        self.character_data = character_data # Store character data
         self.sfx_volume = initial_options.get("sfx_volume", 0.5) # Initial volume
 
         pygame.init()
@@ -102,16 +109,32 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         # --- Load Resources using Methods from ResourcesMixin ---
         # Fonts
         self.fonts = self._load_fonts() # From ResourcesMixin
-        # Images (Background, Textbox, Arrow)
-        self.bg_img_original = self.load_image(self.options.get("background_image_path", config.DEFAULT_BG_IMG)) # From ResourcesMixin
+        # Images (Background, Textbox, Arrow) - These are global UI assets
+        self.bg_img_original = self.load_image(self.options.get("background_image_path", config.DEFAULT_BG_IMG))
+        # derive menu background color by averaging all pixels of bg_img_original
+        try:
+            # get a (width x height x 3) array of RGB
+            arr = pygame.surfarray.array3d(self.bg_img_original)
+            # average over X and Y axes -> [R_avg, G_avg, B_avg]
+            avg = arr.mean(axis=(0,1))
+            def _adj(c: float) -> int:
+                # apply mild contrast/brightness tweak
+                return min(255, max(0, int(((int(c)-128)*1.2 + 128)*0.9)))
+            r, g, b = avg
+            self.menu_bg_color = (_adj(r), _adj(g), _adj(b))
+        except Exception:
+            self.menu_bg_color = (50,50,50)
+
         self.textbox_img = self.load_image(config.TEXTBOX_IMG, scale_to=(config.TEXTBOX_WIDTH, config.TEXTBOX_HEIGHT)) # Scale textbox img
         self.arrow_img = self.load_image(config.ARROW_IMG) # From ResourcesMixin
-        # Face Images
-        self.niko_face_images = self._load_face_images(config.FACES_DIR, "niko_") # From ResourcesMixin
-        self.twm_face_images = self._load_face_images(config.TWM_FACES_DIR, "en_") # From ResourcesMixin
-        # Sounds (Text SFX, Other SFX)
-        self.default_text_sfx = self.load_sound(config.TEXT_SFX_PATH) # From ResourcesMixin
-        self.robot_text_sfx = self.load_sound(config.ROBOT_SFX_PATH) # From ResourcesMixin
+        
+        # Character-specific resources are loaded by load_character_resources
+        self.face_images: dict = {}
+        self.active_text_sfx: pygame.mixer.Sound | None = None
+        self.current_face_image: pygame.Surface | None = None
+        self.load_character_resources(character_data)
+
+        # Sounds (Other SFX - global for now)
         self.other_sfx = self._load_other_sfx() # From ResourcesMixin
         # Assign specific SFX for easier access
         self.confirm_sfx = self.other_sfx.get("menu_decision")
@@ -125,11 +148,9 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         # --- Initialize Mixin States ---
         # (Call initializers for mixins that require them)
         self._initialize_options_menu_state() # Initialize options menu state
+        self._initialize_character_choice_state() # Initialize character choice state
 
         # --- Dialogue State ---
-        self.active_text_sfx = self.default_text_sfx # Start with default text sound
-        self.active_face_images = self.niko_face_images # Start with Niko faces
-        self.current_face_image = self.active_face_images.get("normal") # Start with normal face
         self.last_face_image = self.current_face_image # Track previous face for AI thinking pulse
 
         self._sfx_play_toggle = False # Used for alternating text SFX
@@ -234,6 +255,71 @@ class GUI(ResourcesMixin, DialogueMixin, InputMixin, ChoicesMixin, EffectsMixin,
         # self.set_dialogue(NikoResponse(text="Loading...", face="normal", speed="normal"))
         # Or leave it blank until the first message arrives
 
+    def load_character_resources(self, character_data: 'Character'):
+        """Loads resources specific to the given character data."""
+        self.character_data = character_data # Update internal character data
+        
+        # Face Images
+        self.face_images = self._load_face_images(character_data.actualFaceDir, character_data.facePrefix)
+        
+        # Text SFX
+        self.active_text_sfx = self.load_sound(character_data.actualTextSfxPath)
+        if not self.active_text_sfx:
+            print(f"Warning: Could not load text SFX for {character_data.displayName} from {character_data.actualTextSfxPath}. Text sounds disabled.")
+            # Optionally load a global default text sound if self.active_text_sfx is None
+            # For now, it will just be silent if character-specific one fails.
+
+        # Default Face
+        self.current_face_image = self.face_images.get(character_data.defaultFace)
+        if not self.current_face_image:
+            # Fallback if defaultFace is invalid or not found
+            if self.face_images:
+                first_available_face = next(iter(self.face_images))
+                self.current_face_image = self.face_images[first_available_face]
+                print(f"Warning: Default face '{character_data.defaultFace}' not found for {character_data.displayName}. Using first available: '{first_available_face}'.")
+            else:
+                print(f"CRITICAL WARNING: No faces loaded for {character_data.displayName}. Face display will be broken.")
+                # Create a placeholder surface?
+                placeholder_surf = pygame.Surface((config.FACE_WIDTH, config.FACE_HEIGHT))
+                placeholder_surf.fill((255,0,255)) # Bright pink placeholder
+                self.current_face_image = placeholder_surf
+
+        # Validate faces in availableFacesForPrompt against actual loaded faces
+        self.validate_faces_for_prompt()
+
+        # Update dialogue related states if needed, e.g., if a dialogue is ongoing
+        # For simplicity, changing characters usually means restarting the conversation flow.
+        # If self.current_text is active, its face might need re-evaluation, but set_dialogue handles this.
+        print(f"GUI resources loaded for character: {self.character_data.displayName}")
+
+    def validate_faces_for_prompt(self):
+        """Validates the character's availableFacesForPrompt against actually loaded faces."""
+        if not hasattr(self, 'character_data') or not self.character_data:
+            return
+
+        if not hasattr(self, 'face_images') or not self.face_images:
+            print("Warning: No face images loaded to validate against.")
+            return
+            
+        # Check if any faces in the prompt list don't exist in the loaded faces
+        missing_faces = []
+        for face_name in self.character_data.availableFacesForPrompt:
+            if face_name not in self.face_images:
+                missing_faces.append(face_name)
+                
+        if missing_faces:
+            print(f"Warning: The following faces listed in availableFacesForPrompt are not actually available in the face directory: {', '.join(missing_faces)}")
+            
+            # Update availableFacesForPrompt to only include faces that actually exist
+            valid_faces = [face for face in self.character_data.availableFacesForPrompt if face in self.face_images]
+            self.character_data.availableFacesForPrompt = valid_faces
+            
+            print(f"Available faces updated to: {', '.join(valid_faces)}")
+            
+            # If we're left with no valid faces, add all actually loaded faces as a fallback
+            if not valid_faces:
+                print("No valid faces found in prompt list. Using all loaded faces instead.")
+                self.character_data.availableFacesForPrompt = list(self.face_images.keys())
 
     def update(self, dt):
         """Main update loop called every frame."""

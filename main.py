@@ -22,9 +22,15 @@ import mss  # For screen capture
 import mss.tools
 from PIL import Image  # For image processing
 
+# New import for character management
+import character_manager
+from character_manager import Character  # For type hinting
+
 ai_results_queue = queue.Queue()
-niko_ai = None  # Make niko_ai global
+niko_ai = None  # Make niko_ai global (consider renaming if multiple AIs are planned)
 exit_reason = config.EXIT_STATUS_ABRUPT  # Default exit reason
+current_character: Character | None = None  # Global for the currently loaded character
+formatted_initial_prompt: str = ""  # Global for the current character's AI prompt
 
 # --- Add state for retrying failed AI calls ---
 last_failed_user_input: str | None = None
@@ -172,13 +178,14 @@ def display_dialogue_step(gui: GUI, text: str, face: str, speed: str = "normal")
 
 
 def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
-    """Runs the sequential first-time setup process."""
+    """Runs the sequential first-time user configuration process."""
     original_options = app_options.copy()
     original_volume = gui.sfx_volume
     original_bg_path = app_options.get("background_image_path", config.DEFAULT_BG_IMG)
-
-    gui.set_active_face_set("twm")
-    gui.set_active_sfx("robot")
+    
+    # Load TWM character data for setup visuals
+    twm_char_data = character_manager.get_twm_setup_character()
+    gui.load_character_resources(twm_char_data) # Temporarily load TWM resources
 
     intro_dialogue = [
         {"text": "...", "face": "normal", "speed": "slow"},
@@ -202,6 +209,12 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
             "type": "input",
             "key": "player_name",
             "face": "speak"
+        },
+        {
+            "question": "Setup: Choose your Character",
+            "type": "character_choice",  # Use a specific type for character selection
+            "key": "active_character_id",
+            "face": "normal"
         },
         {
             "question": "Setup: Adjust SFX Volume",
@@ -253,8 +266,9 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
 
         is_input_step = step.get("type") == "input"
         is_background_step = step.get("type") == "background"
-        options_list = []
-        values_list = []
+        is_character_choice_step = step.get("type") == "character_choice" # Added check
+        options_list = [] # For display in gui.choice_options for non-character steps
+        values_list = []  # For mapping selected index to value for non-character steps
 
         if is_input_step:
             current_value = temp_options.get(option_key, "")
@@ -282,7 +296,7 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
         elif is_background_step:
             available_bgs = config.get_available_backgrounds(config.BG_DIR)
             options_list = [os.path.basename(p) for p in available_bgs]
-            values_list = available_bgs
+            values_list = available_bgs # Used when choice is made
             if not options_list:
                  print("Warning: No backgrounds found for setup. Skipping step.")
                  current_step_index += 1; continue
@@ -294,10 +308,21 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
             except (ValueError, KeyError):
                  try: gui.selected_choice_index = options_list.index(os.path.basename(current_value))
                  except (ValueError, KeyError, AttributeError): gui.selected_choice_index = 0
+        
+        elif is_character_choice_step:
+            player_name_for_setup = temp_options.get("player_name", "Player") # Use current name or default
+            current_char_id_for_setup = temp_options.get(step["key"])
+            gui.setup_character_selection_ui(player_name_for_setup, current_char_id_for_setup)
+            if not gui.choice_options: # Check if character list is empty
+                display_dialogue_step(gui, "CRITICAL ERROR: No characters found!", "scared", "fast")
+                gui.running = False
+                cancelled = True
+                break
+            gui.is_choice_active = True
 
-        else:
+        else: # Regular choice step (SFX Volume, Text Speed, AI Model)
             options_list = step["options"]
-            values_list = step["values"]
+            values_list = step["values"] # Used when choice is made
             gui.choice_options = options_list
             gui.is_choice_active = True
             current_value = temp_options.get(step["key"])
@@ -324,20 +349,32 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
                         submitted_value = data.strip()
                         temp_options[step["key"]] = submitted_value
                         gui.is_input_active = False; step_complete = True; gui.play_confirm_sound(); break
-                    elif not is_input_step and action == "choice_made":
+                    
+                    elif not is_input_step and action == "choice_made": # Covers background, character, and other choices
                         chosen_index = data
-                        chosen_value = values_list[chosen_index]
-                        temp_options[option_key] = chosen_value
-                        if option_key == "sfx_volume":
-                            gui.set_sfx_volume(chosen_value); gui.play_confirm_sound()
+                        
+                        if is_character_choice_step:
+                            selected_char_id = gui.get_selected_character_id_from_choice(chosen_index)
+                            if selected_char_id:
+                                temp_options[option_key] = selected_char_id
+                        else:
+                            chosen_value = values_list[chosen_index]
+                            temp_options[option_key] = chosen_value
+
+                        if option_key == "active_character_id":
+                            gui.play_confirm_sound()
+                        elif option_key == "sfx_volume":
+                            gui.set_sfx_volume(temp_options[option_key]); gui.play_confirm_sound()
                         elif option_key == "background_image_path":
                             try:
-                                gui.bg_img_original = gui.load_image(chosen_value)
+                                gui.bg_img_original = gui.load_image(temp_options[option_key])
                                 if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
                                 else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
                             except Exception as e: print(f"Error loading background preview: {e}")
                             gui.play_confirm_sound()
-                        else: gui.play_confirm_sound()
+                        else:
+                            gui.play_confirm_sound()
+                        
                         gui.is_choice_active = False; step_complete = True; break
 
             if not gui.running or cancelled: break
@@ -369,6 +406,23 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
             options.save_options(app_options)
             display_dialogue_step(gui, "Configuration complete.", "smile", "fast")
 
+            app_options = options.load_options()
+            
+            player_name_for_char_load = app_options.get('player_name', 'Player')
+            if not player_name_for_char_load: player_name_for_char_load = "Player"
+            
+            global current_character, formatted_initial_prompt
+            loaded_char = character_manager.load_character_data(app_options["active_character_id"], player_name_for_char_load)
+            if loaded_char:
+                current_character = loaded_char
+                formatted_initial_prompt = current_character.formattedInitialPrompt
+                gui.load_character_resources(current_character)
+            else:
+                display_dialogue_step(gui, f"Error: Could not load character '{app_options['active_character_id']}'. Quitting.", "scared", "fast")
+                gui.running = False
+                return
+
+
             gui.set_sfx_volume(app_options["sfx_volume"])
             gui.bg_img_original = gui.load_image(app_options["background_image_path"])
             if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
@@ -379,17 +433,17 @@ def run_initial_setup(gui: GUI, app_options: Dict[str, Any]):
                  niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
                  print(f"AI Model set to: {niko_ai.model_name} after initial setup.")
 
-        if not cancelled:
-             gui.set_active_face_set("niko")
-             gui.set_active_sfx("default")
-
 
 def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]):
     """Displays the main pause menu."""
-    global niko_ai
+    global niko_ai, current_character, formatted_initial_prompt
     gui.is_menu_active = True
 
-    menu_items = ["Resume chat", "Options", "Chat History", "Quit"]
+    original_character_id = app_options.get("active_character_id")
+    character_changed_requires_restart = False
+
+
+    menu_items = ["Resume chat", "Options", "Chat History", "Change Character", "Quit"]
     selected_index = 0
 
     menu_active = True
@@ -442,9 +496,16 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
                                         save_changes = data
                                         gui.exit_options_menu(save_changes=save_changes)
                                         options_menu_running = False
-                                        if save_changes and niko_ai:
-                                             niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
-                                             print(f"AI Model updated to: {niko_ai.model_name}")
+                                        
+                                        if save_changes:
+                                            new_character_id = app_options.get("active_character_id")
+                                            if new_character_id != original_character_id:
+                                                character_changed_requires_restart = True
+                                                print(f"Character selection changed to {new_character_id}. Restart application to apply.")
+                                            
+                                            if niko_ai:
+                                                 niko_ai.model_name = app_options.get("ai_model_name", config.AI_MODEL_NAME)
+                                                 print(f"AI Model updated to: {niko_ai.model_name}")
                                         break
 
                             if not gui.running or not options_menu_running: break
@@ -458,23 +519,76 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
                         gui.selected_choice_index = 0
                     elif chosen_action == "Chat History":
                         gui.is_menu_active = False
-                        # Add callback to reset AI history when history is deleted
                         gui.display_chat_history(ai_history, delete_callback=lambda: reset_ai_history())
                         if not gui.running: menu_active = False
                         gui.is_menu_active = True
                         selected_index = 0
                         gui.selected_choice_index = 0
+                    elif chosen_action == "Change Character":
+                        gui.is_menu_active = False # Hide the main menu items
+                        
+                        player_name_for_selection = app_options.get("player_name", "Player")
+                        current_char_id_on_entry = app_options.get("active_character_id")
+                        
+                        # Use CharacterChoiceMixin to set up the choice interface.
+                        # This populates gui.choice_options with character display names,
+                        # sets the initial selection, and sets gui.is_choice_active = True.
+                        gui.setup_character_selection_ui(player_name_for_selection, current_char_id_on_entry)
+
+                        selecting_character = True
+                        while selecting_character and gui.running:
+                            dt = gui.clock.tick(60) / 1000.0
+                            
+                            event_processed_in_loop = False
+                            for event_obj in pygame.event.get():
+                                result = gui.handle_event(event_obj) # Handles choice navigation/selection
+                                
+                                if result:
+                                    action, data = result
+                                    event_processed_in_loop = True
+                                    if action == "choice_made":
+                                        selected_char_id = gui.get_selected_character_id_from_choice(data)
+                                        if selected_char_id and selected_char_id != current_char_id_on_entry:
+                                            app_options["active_character_id"] = selected_char_id
+                                            options.save_options(app_options)
+                                            # Character reload is handled after show_main_menu returns
+                                        selecting_character = False
+                                        # break from event_obj loop handled by selecting_character flag
+                                    elif action == "choice_escape":
+                                        selecting_character = False
+                                    elif action == "quit":
+                                        gui.running = False
+                                        # selecting_character will be handled by outer loop condition
+                                        # menu_active will be handled by outer loop condition
+                                    elif action == "initiate_quit":
+                                        # gui.handle_event should have started fade_out.
+                                        # gui.running will be set to False by fade_out completion or subsequent event.
+                                        # selecting_character will be handled by outer loop condition.
+                                        pass # No immediate break, let gui.running propagate
+                                
+                                if not selecting_character or not gui.running:
+                                    break # Break from event_obj loop
+                            
+                            if not selecting_character or not gui.running:
+                                break # Break from selecting_character loop
+
+                            gui.update(dt) 
+                            # gui.render() will call gui.draw_multiple_choice because 
+                            # gui.is_choice_active was set by setup_character_selection_ui.
+                            gui.render() 
+
+                        # Cleanup after character selection loop
+                        gui.is_choice_active = False
+                        gui.choice_options = [] 
+                        gui.choice_rects = []
+                        
+                        # Exit the main menu itself to reflect changes or if quitting
+                        menu_active = False 
+                        # This break ensures that after handling "Change Character",
+                        # we exit the main menu's item processing logic for this iteration.
+                        break 
                     elif chosen_action == "Quit":
                         gui.fade_out(); gui.running = False; menu_active = False
-
-                    break
-
-                elif action == "drag_start" or action == "dragging" or action == "drag_end":
-                    pass
-                elif action == "toggle_menu":
-                    menu_active = False
-                    gui.play_sound("menu_cancel")
-                    break
 
         if not gui.running or not menu_active: break
 
@@ -489,6 +603,11 @@ def show_main_menu(gui: GUI, app_options: Dict[str, Any], ai_history: List[Dict]
 
         pygame.display.flip()
 
+    if character_changed_requires_restart:
+        gui.set_dialogue(NikoResponse(text="(Character changed. Please restart to see the new character!)", face=gui.character_data.defaultFace, speed="normal"))
+        gui.is_input_active = False
+        gui.draw_arrow = True
+
     gui.is_menu_active = False
     gui.is_choice_active = False
     gui.choice_options = []
@@ -500,37 +619,30 @@ def reset_ai_history():
     """Reset the AI's conversation history."""
     global niko_ai
     if niko_ai:
-        # Clear the AI's conversation history
         niko_ai.conversation_history = []
-        # Immediately save the empty history to disk
         niko_ai._save_history()
         print("AI conversation history has been reset.")
 
 
 def main():
-    global niko_ai, exit_reason  # Add exit_reason to globals
-    # --- Add access to global retry state variables ---
+    global niko_ai, exit_reason
     global last_failed_user_input, last_failed_prompt, last_failed_is_initial, waiting_for_retry_choice, last_failed_screenshot
-    # --- End access ---
     global ai_next_self_speak_time, ai_self_speak_in_progress
+    global current_character, formatted_initial_prompt
+
     app_options = options.load_options()
-    # Load previous exit status, default to abrupt if not found
     previous_exit_status = app_options.get(config.EXIT_STATUS_KEY, config.EXIT_STATUS_ABRUPT)
 
-    # Initialize pygame before creating GUI
     pygame.init()
     
-    # Set window icon before creating display
     icon_loaded = False
     try:
-        # First try loading the ico file
         if os.path.exists(config.WINDOW_ICON):
             print(f"Loading window icon from: {config.WINDOW_ICON}")
             pygame.display.set_icon(pygame.image.load(config.WINDOW_ICON))
             icon_loaded = True
             print("Window icon successfully set from ico file")
         else:
-            # Try alternative formats if .ico doesn't exist
             icon_base = os.path.splitext(config.WINDOW_ICON)[0]
             alt_formats = [".png", ".jpg", ".bmp"]
             
@@ -549,76 +661,85 @@ def main():
     if not icon_loaded:
         print("Could not load any window icon - using default pygame icon")
 
+    player_name = app_options.get('player_name', 'Player')
+    if not player_name: player_name = "Player"
+    
+    active_char_id = app_options.get("active_character_id", "niko")
+    loaded_character = character_manager.load_character_data(active_char_id, player_name)
+
+    if not loaded_character:
+        print(f"Failed to load character '{active_char_id}'. Trying to load default 'niko'.")
+        loaded_character = character_manager.load_character_data("niko", player_name)
+        if loaded_character:
+            app_options["active_character_id"] = "niko"
+            options.save_options(app_options)
+        else:
+            print(f"Fatal Error: Could not load default character 'niko'. Please ensure 'characters/niko.json' exists and is valid.")
+            pygame.quit()
+            sys.exit(1)
+            
+    current_character = loaded_character
+    formatted_initial_prompt = current_character.formattedInitialPrompt
+
     try:
-        gui = GUI(app_options)
+        gui = GUI(app_options, current_character)
     except pygame.error as e:
         print(f"Fatal Error initializing Pygame/GUI: {e}"); sys.exit(1)
     except Exception as e:
         print(f"Fatal Error initializing GUI: {e}"); sys.exit(1)
 
-    # --- Initial Setup ---
     if not app_options.get("setup_complete", False):
         run_initial_setup(gui, app_options)
         if not gui.running:
              pygame.quit(); sys.exit()
-        # Reload options after setup completes
         app_options = options.load_options()
-        # Re-apply necessary settings from potentially changed options
-        gui.set_active_face_set("niko")
-        gui.set_active_sfx("default")
+        player_name = app_options.get('player_name', 'Player')
+        if not player_name: player_name = "Player"
+        
         gui.set_sfx_volume(app_options["sfx_volume"])
         gui.bg_img_original = gui.load_image(app_options["background_image_path"])
         if gui.bg_img_original: gui.bg_img = pygame.transform.smoothscale(gui.bg_img_original, (gui.window_width, gui.window_height))
         else: gui.bg_img = pygame.Surface((gui.window_width, gui.window_height)); gui.bg_img.fill((50,50,50))
         gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
 
-    # --- AI Initialization ---
-    player_name = app_options.get('player_name', 'Player')
-    if not player_name: player_name = "Player"
-    try: formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
-    except Exception as e: print(f"Error formatting initial prompt: {e}"); formatted_initial_prompt = f"Hello {player_name}, I am Niko."
-
     ai_model_to_use = app_options.get("ai_model_name", config.AI_MODEL_NAME)
     print(f"Using AI Model: {ai_model_to_use}")
     try:
-        # Initialize AI - it will load history internally if available
         niko_ai = NikoAI(ai_model_name=ai_model_to_use)
+        # load persisted AI conversation history if available
+        if hasattr(niko_ai, '_load_history'):
+            try:
+                niko_ai._load_history()
+            except Exception as e:
+                print(f"Warning loading AI history: {e}")
     except ValueError as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
     except Exception as e: print(f"Fatal Error initializing AI: {e}"); pygame.quit(); sys.exit(1)
 
-    # Initialize self-speak timer if feature is enabled
     speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
     if speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER:
         ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
 
-    # --- State Variables ---
     ai_is_thinking = False
     dialogue_queue = deque()
     ai_thread = None
-    force_quit_pending = False # Flag to trigger forced quit after dialogue queue finishes
-    quit_pending = False       # Flag to trigger normal quit after dialogue queue finishes
-    input_was_active_before_menu = False # Track input state before menu
+    force_quit_pending = False
+    quit_pending = False
+    input_was_active_before_menu = False
 
-    # --- Initial Fade In ---
     gui.fade_in()
     if not gui.running: pygame.quit(); sys.exit()
 
-    # --- Process AI Response Function ---
     def process_ai_response(response_segments: List[NikoResponse] | None):
-        """Queues dialogue segments received from the AI and displays the first. Handles errors and quit commands."""
-        # Use nonlocal to modify flags in the outer scope (main)
         nonlocal ai_is_thinking, force_quit_pending, quit_pending
         global exit_reason, waiting_for_retry_choice, ai_self_speak_in_progress
 
-        # Reset state for this response
         gui.ai_is_thinking = False
         dialogue_queue.clear()
         ai_is_thinking = False
-        force_quit_pending = False # Reset pending flags for this response
+        force_quit_pending = False
         quit_pending = False
         error_occurred = False
         
-        # Reset self-speak flag when response is processed
         ai_self_speak_in_progress = False
 
         if response_segments:
@@ -626,7 +747,6 @@ def main():
             last_segment_index = num_segments - 1
             cleaned_segments = []
 
-            # Check original last segment for quit commands *before* cleaning
             if num_segments > 0:
                 original_last_text = response_segments[last_segment_index].text
                 if "[quit_forced]" in original_last_text:
@@ -636,9 +756,7 @@ def main():
                     quit_pending = True
                     exit_reason = config.EXIT_STATUS_NORMAL_AI
 
-            # Clean all segments and add non-empty ones to a temporary list
             for segment in response_segments:
-                # Create a new NikoResponse with cleaned text
                 cleaned_text = segment.text.replace("[quit_forced]", "").replace("[quit]", "").strip()
                 if cleaned_text:
                     cleaned_segment = NikoResponse(
@@ -650,42 +768,32 @@ def main():
                     )
                     cleaned_segments.append(cleaned_segment)
 
-            # Add cleaned segments to the main dialogue queue
             dialogue_queue.extend(cleaned_segments)
 
-            # Display the first segment if available
             if dialogue_queue:
                 next_segment = dialogue_queue.popleft()
                 gui.set_dialogue(next_segment)
-                gui.is_input_active = False # Ensure input is off when showing new segment
-            # If queue is empty *after cleaning* (e.g., only contained tags or was empty initially)
+                gui.is_input_active = False
             else:
-                # Trigger pending quits immediately if queue is already empty (single segment case)
                 if force_quit_pending:
                      gui.start_forced_quit()
-                     force_quit_pending = False # Consumed
-                     gui.is_input_active = False # Ensure input off
+                     force_quit_pending = False
+                     gui.is_input_active = False
                 elif quit_pending:
-                     # For normal quit, show arrow briefly before fade on advance
                      gui.draw_arrow = True
-                     gui.is_input_active = False # Ensure input off
-                     # The actual fade happens on the next 'advance' in the main loop
-                # Otherwise, if no quit pending and no error, ready for input
-                elif not error_occurred: # Check error flag from potential earlier processing
-                     gui.is_input_active = True # Directly enable input
+                     gui.is_input_active = False
+                elif not error_occurred:
+                     gui.is_input_active = True
                      gui.draw_arrow = False
 
-        # Handle case where AI worker returned None or empty list initially
         elif response_segments is None or not response_segments:
             error_occurred = True
             print("Error: AI worker returned None or empty response (critical error).")
             error_response = NikoResponse(text="(Uh oh, my train of thought derailed completely! Retry?)", face="scared", speed="normal", bold=False, italic=False)
-            gui.set_dialogue(error_response) # Display error message
-            gui.is_input_active = False # Ensure input off
+            gui.set_dialogue(error_response)
+            gui.is_input_active = False
 
-        # --- Handle error state ---
         if error_occurred:
-            # Set up retry choice only if no quit commands were pending
             if not force_quit_pending and not quit_pending:
                 waiting_for_retry_choice = True
                 gui.choice_options = ["Retry", "Cancel"]
@@ -694,24 +802,18 @@ def main():
                 gui.draw_arrow = False
                 gui.is_input_active = False
             else:
-                 # If an error occurred but a quit was also pending, prioritize the quit.
-                 # The quit logic (immediate or pending) already handled above.
                  pass
 
 
-    # --- Initial AI Call ---
-    # Call get_initial_greeting. It will handle whether to greet or reconnect based on loaded history.
     ai_is_thinking = True
     gui.ai_is_thinking = True
     gui.render()
     pygame.display.flip()
 
-    last_failed_user_input = None  # Will be set by get_initial_greeting if it uses generate_response
+    last_failed_user_input = None
     last_failed_prompt = formatted_initial_prompt
-    last_failed_screenshot = None  # No screenshot for initial greeting
-    # Determine if it's truly initial based on history *before* calling get_initial_greeting
+    last_failed_screenshot = None
     last_failed_is_initial = not bool(niko_ai.conversation_history)
-    # Start the thread for the initial message, passing previous exit status
     ai_thread = threading.Thread(
         target=ai_worker,
         args=(niko_ai, formatted_initial_prompt),
@@ -721,10 +823,9 @@ def main():
     ai_thread.start()
 
 
-    # --- Main Loop ---
     while gui.running:
         dt = gui.clock.tick(60) / 1000.0
-        current_time = time.time()  # Get current time for self-speaking checks
+        current_time = time.time()
 
         if gui.is_forced_quitting:
             for event in pygame.event.get():
@@ -734,36 +835,27 @@ def main():
             gui.render()
             continue
 
-        # Check if it's time for Niko to speak by itself
         speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
-        # --- Modified Trigger Condition ---
-        # Only trigger if: not thinking, no dialogue queue, no retry pending,
-        # no menus active, no choices active, input is EXPLICITLY HIDDEN,
-        # not already self-speaking, timer expired, and frequency is not 'never'.
         if (not ai_is_thinking and
             not dialogue_queue and
             not waiting_for_retry_choice and
             not gui.is_menu_active and
             not gui.is_options_menu_active and
             not gui.is_choice_active and
-            not gui.is_input_active and # Ensure input field itself isn't active
-            gui.is_input_hidden and     # Check if input was explicitly hidden
+            not gui.is_input_active and
+            gui.is_input_hidden and
             not ai_self_speak_in_progress and
             current_time >= ai_next_self_speak_time and
             speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER):
-        # --- End Modified Trigger Condition ---
 
-            # Niko should speak now
-            print(f"Niko is speaking by itself (frequency: {speak_frequency}, input hidden)") # Updated log
+            print(f"Niko is speaking by itself (frequency: {speak_frequency}, input hidden)")
             ai_self_speak_in_progress = True
             ai_is_thinking = True
             gui.ai_is_thinking = True
             gui.is_input_active = False
             
-            # Choose a random topic for Niko to talk about
             random_topic = generate_random_topic()
             
-            # Start thread for AI to generate response about the random topic
             ai_thread = threading.Thread(
                 target=ai_worker,
                 args=(niko_ai, formatted_initial_prompt, f"(Niko deciding to speak on their own about: {random_topic})"),
@@ -771,7 +863,6 @@ def main():
             )
             ai_thread.start()
             
-            # Set next time to speak
             ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
 
         if ai_is_thinking:
@@ -831,7 +922,7 @@ def main():
                                      break
                                 else:
                                      gui.set_dialogue(NikoResponse(text="(Alright.)", face="normal", speed="fast"))
-                                     gui.is_input_active = True # Enable input directly
+                                     gui.is_input_active = True
                                      gui.draw_arrow = False
                                      gui.user_input_text = ""
                            last_failed_user_input = None
@@ -853,14 +944,11 @@ def main():
                     gui.running = False; break
                 elif action == "toggle_menu":
                      if not gui.is_menu_active and not gui.is_input_active and not gui.is_choice_active and not gui.is_options_menu_active:
-                          # Store current dialogue state before opening menu
                           input_was_active_before_menu = gui.is_input_active
                           
-                          # Track if there is unfinished dialogue in the queue or animation
                           has_more_dialogue = bool(dialogue_queue)
                           has_finished_animation = not gui.is_animating and not gui.is_paused
                           
-                          # Check if we're at the last message and ready for input
                           at_last_message = (not dialogue_queue and 
                                             not ai_is_thinking and
                                             not gui.is_animating and 
@@ -874,7 +962,23 @@ def main():
                           should_continue = show_main_menu(gui, app_options, niko_ai.conversation_history)
                           if not should_continue: break
 
-                          # Apply option changes
+                          # if user picked "Change Character", reload data/resources
+                          new_char = app_options.get("active_character_id")
+                          if new_char != current_character.id:
+                              # load new character
+                              loaded = character_manager.load_character_data(new_char, player_name)
+                              if loaded:
+                                  current_character = loaded
+                                  formatted_initial_prompt = loaded.formattedInitialPrompt
+                                  gui.load_character_resources(loaded)
+                                  # reset AI history
+                                  if niko_ai:
+                                      niko_ai.conversation_history = []
+                                      niko_ai._save_history()
+                              else:
+                                  print(f"Error loading character '{new_char}'")
+
+                          # re-apply any other options changes
                           app_options = options.load_options()
                           gui.set_sfx_volume(app_options["sfx_volume"])
                           gui.bg_img_original = gui.load_image(app_options["background_image_path"])
@@ -885,34 +989,30 @@ def main():
                           gui.current_text_speed_ms = config.TEXT_SPEED_MAP.get(app_options.get("default_text_speed", "normal"), config.TEXT_SPEED_MAP["normal"])
                           player_name = app_options.get('player_name', 'Player')
                           if not player_name: player_name = "Player"
-                          try: formatted_initial_prompt = config.INITIAL_PROMPT.replace('{player_name}', player_name)
+                          
+                          try: formatted_initial_prompt = current_character.promptTemplate.format(
+                                    player_name=player_name,
+                                    available_faces=", ".join([f"'{f}'" for f in current_character.availableFacesForPrompt]),
+                                    available_sfx=", ".join([f"'{s}'" for s in current_character.availableSfxForPrompt])
+                                )
                           except Exception as e: print(f"Error re-formatting initial prompt after menu: {e}")
                           print(f"Current AI Model after menu: {niko_ai.model_name}")
 
-                          # RESTORATION LOGIC - Corrected to handle dialogue advancement case
                           if input_was_active_before_menu:
-                               # If input was active before, restore it
                                gui.is_input_active = True
                                gui.draw_arrow = False
                                gui.user_input_text = ""
                           elif at_last_message:
-                               # If we were at the last message, enable input
                                gui.is_input_active = True
                                gui.draw_arrow = False
                                gui.user_input_text = ""
                           elif has_more_dialogue:
-                               # If there's more dialogue in the queue, set up for advancement
                                gui.is_input_active = False
                                gui.draw_arrow = True
                           else:
-                               # Current dialogue segment is still displaying
                                gui.is_input_active = False
-                               
-                               # Only show arrow if animation and pause are finished
-                               # This is critical for allowing advance after return from menu
                                gui.draw_arrow = has_finished_animation
                           
-                          # Reset menu state flags
                           input_was_active_before_menu = False
 
                 elif not gui.is_menu_active:
@@ -928,14 +1028,14 @@ def main():
                                     gui.running = False
                                     quit_pending = False
                                     gui.is_input_active = False
-                                elif not gui.is_input_active and not gui.is_input_hidden: # Check if input is not active AND not hidden
+                                elif not gui.is_input_active and not gui.is_input_hidden:
                                     gui.is_input_active = True
                                     gui.draw_arrow = False
                                     gui.user_input_text = ""
-                                    # Cancel self-speak when user advances dialogue to input
-                                    # (This case might be less common now, but keep for safety)
-                                    ai_next_self_speak_time = float('inf')
-                                    print("[Self-Speak Timer] Timer cancelled (advanced to input).")
+                                    speak_frequency_check = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
+                                    if speak_frequency_check != config.AI_SPEAK_FREQUENCY_NEVER:
+                                        ai_next_self_speak_time = float('inf')
+                                        print("[Self-Speak Timer] Timer cancelled (advanced to input).")
                             else:
                                 next_segment = dialogue_queue.popleft()
                                 gui.set_dialogue(next_segment)
@@ -952,18 +1052,19 @@ def main():
                                 gui.is_input_active = False
                                 gui.clear_input()
 
-                                # Capture screenshot if enabled
                                 screenshot_path = capture_screenshot(app_options)
                                 
                                 last_failed_user_input = user_input
                                 last_failed_prompt = formatted_initial_prompt
                                 last_failed_is_initial = False
-                                last_failed_screenshot = screenshot_path  # Store screenshot path for potential retry
+                                last_failed_screenshot = screenshot_path
 
-                                # Reset self-speak timer when user submits input
                                 speak_frequency = app_options.get("ai_speak_frequency", config.AI_SPEAK_FREQUENCY_NEVER)
                                 if speak_frequency != config.AI_SPEAK_FREQUENCY_NEVER:
                                     ai_next_self_speak_time = set_next_self_speak_time(speak_frequency)
+                                else:
+                                    ai_next_self_speak_time = float('inf')
+
 
                                 ai_thread = threading.Thread(
                                     target=ai_worker,
@@ -996,6 +1097,12 @@ def main():
 
     app_options[config.EXIT_STATUS_KEY] = exit_reason
     options.save_options(app_options)
+    # save AI conversation history for next session
+    if niko_ai and hasattr(niko_ai, '_save_history'):
+        try:
+            niko_ai._save_history()
+        except Exception as e:
+            print(f"Warning saving AI history: {e}")
     print(f"Exiting application. Reason: {exit_reason}")
     pygame.quit()
     sys.exit()

@@ -195,6 +195,16 @@ class EventsMixin:
         if getattr(self, 'is_choice_active', False):
             # Ensure the choice event handler method exists (now in EventHandlersMixin)
             if hasattr(self, 'handle_choice_event'):
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_LEFT:
+                        self.selected_choice_index = (self.selected_choice_index - 1) % len(self.choice_options)
+                        return None
+                    elif event.key == pygame.K_RIGHT:
+                        self.selected_choice_index = (self.selected_choice_index + 1) % len(self.choice_options)
+                        return None
+                    # allow escape to cancel choice menus
+                    elif event.key == pygame.K_ESCAPE and self.is_choice_active:
+                        return ("choice_escape", None)
                 return self.handle_choice_event(event)
             else:
                 print("Warning: is_choice_active is True, but handle_choice_event method missing.")
