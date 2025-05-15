@@ -23,7 +23,7 @@ Chat with an AI Niko from OneShot using Pygame and Google Gemini!
 
 **Setup:**
 
-1. **Clone:** `git clone <repository_url> && cd niko-onegen`
+1. **Clone:** `git clone https://github.com/create-juicey-app/Niko-Onegen-Gemini.git && cd niko-onegen`
 2. **Install:** `pip install -r requirements.txt` (or install manually from the list above).
 3. **API Key:**
 
